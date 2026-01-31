@@ -448,3 +448,31 @@ func (s *Store) GetAllEmbeddings() ([]*model.Embedding, error) {
 	}
 	return embeddings, nil
 }
+
+// SearchNotes performs a full-text search using FTS5.
+func (s *Store) SearchNotes(query string) ([]*model.Note, error) {
+	// FTS5 query
+	rows, err := s.db.Query(`
+		SELECT n.id, n.path, n.title, n.hash, n.mod_time 
+		FROM notes n
+		JOIN notes_fts f ON n.id = f.id
+		WHERE notes_fts MATCH ?
+		ORDER BY rank
+	`, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notes []*model.Note
+	for rows.Next() {
+		var n model.Note
+		var unixTime int64
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+			return nil, err
+		}
+		n.ModTime = time.Unix(unixTime, 0)
+		notes = append(notes, &n)
+	}
+	return notes, nil
+}

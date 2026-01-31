@@ -111,10 +111,10 @@ Hardening the codebase with comprehensive testing and consistency checks.
 
 ### Phase 12: External Integration (MCP)
 Implementing the Model Context Protocol (MCP) to allow LLM agents (like Gemini CLI) to interact directly with the Zettelkasten.
-- [ ] **MCP Server**:
-    - [ ] Implement an MCP-compliant server (stdio or HTTP transport).
-    - [ ] Expose **Resources**: Allow reading notes as resources (`zettel://<id>`).
-    - [ ] Expose **Prompts**: Create standard prompts (e.g., "Summarize Note", "Find Connections").
-- [ ] **Tools Integration**:
-    - [ ] Expose `zk search`, `zk similar`, `zk new`, and `zk link` as MCP tools.
-    - [ ] Allow the agent to query the graph structure.
+- [x] **MCP Server**:
+    - [x] Implement an MCP-compliant server (stdio or HTTP transport).
+    - [x] Expose **Resources**: Allow reading notes as resources (`zettel://<id>`).
+    - [x] Expose **Prompts**: Create standard prompts (e.g., "Summarize Note", "Find Connections").
+- [x] **Tools Integration**:
+    - [x] Expose `zk search`, `zk similar`, `zk new`, and `zk link` as MCP tools.
+    - [x] Allow the agent to query the graph structure.

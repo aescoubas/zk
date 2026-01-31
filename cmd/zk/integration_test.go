@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,6 +96,53 @@ func TestWorkflow(t *testing.T) {
 	}
 	if !strings.Contains(out, "My First Note") {
 		t.Errorf("List output missing note title. Got:\n%s", out)
+	}
+}
+
+func TestMCP(t *testing.T) {
+	// Setup
+	zkRoot, err := os.MkdirTemp("", "zk_mcp_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(zkRoot)
+
+	// Create DB
+	if err := os.Mkdir(filepath.Join(zkRoot, "permanent_notes"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runZK(t, zkRoot, "index")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start MCP process
+	cmd := exec.Command(binaryPath, "mcp", "--dir", zkRoot)
+	stdin, _ := cmd.StdinPipe()
+	stdout, _ := cmd.StdoutPipe()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+
+	// Send Initialize
+	req := `{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test", "version": "1.0"}}}`
+	if _, err := stdin.Write([]byte(req + "\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read Response
+	scanner := bufio.NewScanner(stdout)
+	if scanner.Scan() {
+		resp := scanner.Text()
+		if !strings.Contains(resp, "zk-mcp") {
+			t.Errorf("Expected response to contain zk-mcp, got: %s", resp)
+		}
+	} else {
+		t.Error("No response from MCP server")
 	}
 }
 
