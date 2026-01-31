@@ -60,7 +60,12 @@ Establishing the project structure and the high-performance local database.
     - [x] Implement file walker to index all existing notes on startup.
     - [x] Implement `fsnotify` watcher to update the index incrementally on file save.
 
-### Phase 7: The Interface Layer (CLI & TUI)
+### Phase 7: Architectural Documentation
+Ensuring the system's design is well-documented and decisions are tracked.
+- [x] **Architecture Records**: Create `ARCHITECTURE/` directory and populate with initial ADRs.
+- [x] **Maintenance Policy**: Ensure README and workflows mandate updating ADRs on significant changes.
+
+### Phase 8: The Interface Layer (CLI & TUI)
 Replacing the Python scripts with a unified binary and adding a rich terminal UI.
 - [ ] **CLI Replacement**:
     - [ ] Port `zk new`, `zk link`, `zk random`, `zk stale` to Go using `cobra`.
@@ -71,7 +76,7 @@ Replacing the Python scripts with a unified binary and adding a rich terminal UI
     - [ ] Feature: Instant fuzzy filter (title + content).
     - [ ] Feature: Split-pane preview of the selected note.
 
-### Phase 8: Deep Integration (LSP)
+### Phase 9: Deep Integration (LSP)
 Making the tool editor-agnostic by implementing the Language Server Protocol.
 - [ ] **LSP Skeleton**:
     - [ ] Implement basic JSON-RPC 2.0 handling over Stdio.
@@ -82,7 +87,7 @@ Making the tool editor-agnostic by implementing the Language Server Protocol.
     - [ ] **Hover**: `textDocument/hover` showing note preview when hovering a link.
 - [ ] **Editor Config**: Write config snippets for Neovim (native LSP) and VS Code (Generic LSP Client).
 
-### Phase 9: Intelligence & Emergence
+### Phase 10: Intelligence & Emergence
 Leveraging the index for advanced discovery features.
 - [ ] **Semantic Search (Vector Embeddings)**:
     - [ ] Integrate a local embedding model (e.g., via `ollama` or `all-minilm` in Go).

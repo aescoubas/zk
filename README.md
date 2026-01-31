@@ -34,6 +34,7 @@ This repository has been overhauled to support this atomic workflow with custom 
 - **`references/`**: Source materials (`bibliographic_notes/`).
 - **`bin/`**: Custom CLI tools (`zk`, `lint`, `sync`, `build_graph.py`).
 - **`tools/`**: Helper scripts and templates.
+- **`ARCHITECTURE/`**: Architectural Decision Records (ADRs). Keep these up to date when making significant changes.
 
 ### 2. The `zk` CLI Tool
 
