@@ -96,3 +96,25 @@ Leveraging the index for advanced discovery features.
 - [x] **Spaced Repetition System (SRS)**:
     - [x] Algorithm: Implement a review scheduler (SM-2).
     - [x] `zk review`: A specialized TUI mode for reviewing due/stale notes.
+
+### Phase 11: Quality Assurance & Reliability
+Hardening the codebase with comprehensive testing and consistency checks.
+- [x] **Unit Testing**:
+    - [x] Add unit tests for core logic (parser, SRS algorithm, model serialization).
+    - [x] Add unit tests for `store` package (SQLite interactions).
+- [x] **Integration Testing**:
+    - [x] Implement end-to-end CLI tests (using a temporary test directory/DB).
+    - [x] Test full workflows: Create -> Index -> Link -> Search -> Review.
+- [x] **Code Quality**:
+    - [x] Run linters (`golangci-lint`) and fix issues.
+    - [x] Ensure consistent error handling and logging throughout.
+
+### Phase 12: External Integration (MCP)
+Implementing the Model Context Protocol (MCP) to allow LLM agents (like Gemini CLI) to interact directly with the Zettelkasten.
+- [ ] **MCP Server**:
+    - [ ] Implement an MCP-compliant server (stdio or HTTP transport).
+    - [ ] Expose **Resources**: Allow reading notes as resources (`zettel://<id>`).
+    - [ ] Expose **Prompts**: Create standard prompts (e.g., "Summarize Note", "Find Connections").
+- [ ] **Tools Integration**:
+    - [ ] Expose `zk search`, `zk similar`, `zk new`, and `zk link` as MCP tools.
+    - [ ] Allow the agent to query the graph structure.
