@@ -118,3 +118,14 @@ Implementing the Model Context Protocol (MCP) to allow LLM agents (like Gemini C
 - [x] **Tools Integration**:
     - [x] Expose `zk search`, `zk similar`, `zk new`, and `zk link` as MCP tools.
     - [x] Allow the agent to query the graph structure.
+
+### Phase 13: UI/UX Refinement & Terminal Native Visualization
+Moving visualization and interaction entirely into the terminal for a seamless workflow.
+- [x] **Terminal Graph Explorer**:
+    - [x] Implement a TUI-based graph viewer (using `bubbletea` or similar) to visualize nodes and edges directly in the terminal.
+    - [x] Allow navigation of the graph (panning/zooming or traversing nodes) via keyboard.
+- [x] **Interactive Dashboard**:
+    - [x] Create a "Home" dashboard TUI showing stats, recent notes, and random entry points.
+- [x] **Usability Polish**:
+    - [x] Standardize keyboard shortcuts across all TUI modes.
+    - [x] Improve error messages and help text for all commands.

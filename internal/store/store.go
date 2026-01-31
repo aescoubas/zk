@@ -285,6 +285,67 @@ func (s *Store) GetStaleNotes(age time.Duration) ([]*model.Note, error) {
 	return notes, nil
 }
 
+// GetStats returns the total count of notes and links.
+func (s *Store) GetStats() (int, int, error) {
+	var notesCount, linksCount int
+	if err := s.db.QueryRow("SELECT count(*) FROM notes").Scan(&notesCount); err != nil {
+		return 0, 0, err
+	}
+	if err := s.db.QueryRow("SELECT count(*) FROM links").Scan(&linksCount); err != nil {
+		return 0, 0, err
+	}
+	return notesCount, linksCount, nil
+}
+
+// GetRecentNotes retrieves the most recently modified notes.
+func (s *Store) GetRecentNotes(limit int) ([]*model.Note, error) {
+	rows, err := s.db.Query(`SELECT id, path, title, hash, mod_time FROM notes ORDER BY mod_time DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notes []*model.Note
+	for rows.Next() {
+		var n model.Note
+		var unixTime int64
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+			return nil, err
+		}
+		n.ModTime = time.Unix(unixTime, 0)
+		notes = append(notes, &n)
+	}
+	return notes, nil
+}
+
+// GetBacklinks retrieves notes that link to the given targetID.
+func (s *Store) GetBacklinks(targetID string) ([]*model.Note, error) {
+	query := `
+		SELECT n.id, n.path, n.title, n.hash, n.mod_time
+		FROM notes n
+		JOIN links l ON n.id = l.source_id
+		WHERE l.target_id = ?
+		ORDER BY n.mod_time DESC
+	`
+	rows, err := s.db.Query(query, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notes []*model.Note
+	for rows.Next() {
+		var n model.Note
+		var unixTime int64
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+			return nil, err
+		}
+		n.ModTime = time.Unix(unixTime, 0)
+		notes = append(notes, &n)
+	}
+	return notes, nil
+}
+
 // DeleteNote removes a note from the index.
 func (s *Store) DeleteNote(id string) error {
 	tx, err := s.db.Begin()
