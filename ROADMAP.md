@@ -67,14 +67,14 @@ Ensuring the system's design is well-documented and decisions are tracked.
 
 ### Phase 8: The Interface Layer (CLI & TUI)
 Replacing the Python scripts with a unified binary and adding a rich terminal UI.
-- [ ] **CLI Replacement**:
-    - [ ] Port `zk new`, `zk link`, `zk random`, `zk stale` to Go using `cobra`.
-    - [ ] Ensure parity with existing Vim integration.
-- [ ] **Interactive TUI (The Navigator)**:
-    - [ ] Build a "File Manager for Ideas" using `bubbletea`.
-    - [ ] Feature: Browsable list of notes with metadata columns (tags, links count).
-    - [ ] Feature: Instant fuzzy filter (title + content).
-    - [ ] Feature: Split-pane preview of the selected note.
+- [x] **CLI Replacement**:
+    - [x] Port `zk new`, `zk link`, `zk random`, `zk stale` to Go using `cobra`.
+    - [x] Ensure parity with existing Vim integration.
+- [x] **Interactive TUI (The Navigator)**:
+    - [x] Build a "File Manager for Ideas" using `bubbletea`.
+    - [x] Feature: Browsable list of notes with metadata columns (tags, links count).
+    - [x] Feature: Instant fuzzy filter (title + content).
+    - [ ] Feature: Split-pane preview of the selected note. (Deferred)
 
 ### Phase 9: Deep Integration (LSP)
 Making the tool editor-agnostic by implementing the Language Server Protocol.

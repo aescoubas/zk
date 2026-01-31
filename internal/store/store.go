@@ -198,6 +198,30 @@ func (s *Store) IndexNote(n *model.Note) error {
 	return tx.Commit()
 }
 
+// ListNotes retrieves all notes from the database.
+func (s *Store) ListNotes() ([]*model.Note, error) {
+	rows, err := s.db.Query(`SELECT id, path, title, hash, mod_time FROM notes ORDER BY mod_time DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notes []*model.Note
+	for rows.Next() {
+		var n model.Note
+		var unixTime int64
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+			return nil, err
+		}
+		n.ModTime = time.Unix(unixTime, 0)
+		notes = append(notes, &n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+	return notes, nil
+}
+
 // GetNote retrieves a note by ID.
 func (s *Store) GetNote(id string) (*model.Note, error) {
 	row := s.db.QueryRow(`SELECT id, path, title, hash, mod_time FROM notes WHERE id = ?`, id)
@@ -209,6 +233,41 @@ func (s *Store) GetNote(id string) (*model.Note, error) {
 	}
 	n.ModTime = time.Unix(unixTime, 0)
 	return &n, nil
+}
+
+// GetRandomNote retrieves a single random note.
+func (s *Store) GetRandomNote() (*model.Note, error) {
+	row := s.db.QueryRow(`SELECT id, path, title, hash, mod_time FROM notes ORDER BY RANDOM() LIMIT 1`)
+	var n model.Note
+	var unixTime int64
+	err := row.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime)
+	if err != nil {
+		return nil, err
+	}
+	n.ModTime = time.Unix(unixTime, 0)
+	return &n, nil
+}
+
+// GetStaleNotes retrieves notes unmodified for the given duration.
+func (s *Store) GetStaleNotes(age time.Duration) ([]*model.Note, error) {
+	cutoff := time.Now().Add(-age).Unix()
+	rows, err := s.db.Query(`SELECT id, path, title, hash, mod_time FROM notes WHERE mod_time < ? ORDER BY mod_time ASC`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notes []*model.Note
+	for rows.Next() {
+		var n model.Note
+		var unixTime int64
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+			return nil, err
+		}
+		n.ModTime = time.Unix(unixTime, 0)
+		notes = append(notes, &n)
+	}
+	return notes, nil
 }
 
 // DeleteNote removes a note from the index.
