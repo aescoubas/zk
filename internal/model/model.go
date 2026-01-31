@@ -24,6 +24,22 @@ type Note struct {
 	OutgoingLinks []Link `json:"outgoing_links"`
 }
 
+// SRSItem represents the state of a note in the Spaced Repetition System.
+type SRSItem struct {
+	NoteID      string    `json:"note_id"`
+	NextReview  time.Time `json:"next_review"`
+	Interval    float64   `json:"interval"`    // In days
+	EaseFactor  float64   `json:"ease_factor"` // Default 2.5
+	Repetitions int       `json:"repetitions"`
+}
+
+// Embedding represents a vector embedding for a note.
+type Embedding struct {
+	NoteID string    `json:"note_id"`
+	Vector []float64 `json:"vector"`
+	Model  string    `json:"model"`
+}
+
 // Link represents a connection between two notes.
 type Link struct {
 	// SourceID is the ID of the note containing the link.

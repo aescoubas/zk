@@ -89,10 +89,10 @@ Making the tool editor-agnostic by implementing the Language Server Protocol.
 
 ### Phase 10: Intelligence & Emergence
 Leveraging the index for advanced discovery features.
-- [ ] **Semantic Search (Vector Embeddings)**:
-    - [ ] Integrate a local embedding model (e.g., via `ollama` or `all-minilm` in Go).
-    - [ ] Generate vectors for all notes and store in SQLite (using `sqlite-vec` extension or blob).
-    - [ ] Implement `zk similar` command to find conceptually related notes.
-- [ ] **Spaced Repetition System (SRS)**:
-    - [ ] Algorithm: Implement a review scheduler (e.g., SM-2) based on note "importance" (connectivity) and "freshness" (last edit).
-    - [ ] `zk review`: A specialized TUI mode for reviewing stale but important notes.
+- [x] **Semantic Search (Vector Embeddings)**:
+    - [x] Integrate a local embedding model (via `ollama` client in Go).
+    - [x] Generate vectors for all notes and store in SQLite (using JSON/BLOB).
+    - [x] Implement `zk similar` command to find conceptually related notes.
+- [x] **Spaced Repetition System (SRS)**:
+    - [x] Algorithm: Implement a review scheduler (SM-2).
+    - [x] `zk review`: A specialized TUI mode for reviewing due/stale notes.

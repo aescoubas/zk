@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -82,6 +83,20 @@ CREATE TABLE IF NOT EXISTS tags (
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id UNINDEXED, title, content);
+
+CREATE TABLE IF NOT EXISTS srs_items (
+	note_id TEXT PRIMARY KEY,
+	next_review INTEGER,
+	interval REAL,
+	ease_factor REAL,
+	repetitions INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS embeddings (
+	note_id TEXT PRIMARY KEY,
+	vector BLOB,
+	model TEXT
+);
 `
 
 // Store manages the SQLite database.
@@ -302,5 +317,134 @@ func (s *Store) DeleteNote(id string) error {
 		return fmt.Errorf("failed to delete note: %w", err)
 	}
 
+	// Delete from SRS
+	_, err = tx.Exec("DELETE FROM srs_items WHERE note_id = ?", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete srs item: %w", err)
+	}
+
 	return tx.Commit()
+}
+
+// GetSRSItem retrieves the SRS state for a note.
+func (s *Store) GetSRSItem(noteID string) (*model.SRSItem, error) {
+	row := s.db.QueryRow(`SELECT note_id, next_review, interval, ease_factor, repetitions FROM srs_items WHERE note_id = ?`, noteID)
+	var item model.SRSItem
+	var nextReview int64
+	err := row.Scan(&item.NoteID, &nextReview, &item.Interval, &item.EaseFactor, &item.Repetitions)
+	if err == sql.ErrNoRows {
+		return nil, nil // Not found is okay, means new item
+	}
+	if err != nil {
+		return nil, err
+	}
+	item.NextReview = time.Unix(nextReview, 0)
+	return &item, nil
+}
+
+// SaveSRSItem inserts or updates an SRS item.
+func (s *Store) SaveSRSItem(item *model.SRSItem) error {
+	_, err := s.db.Exec(`
+		INSERT INTO srs_items (note_id, next_review, interval, ease_factor, repetitions)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(note_id) DO UPDATE SET
+			next_review=excluded.next_review,
+			interval=excluded.interval,
+			ease_factor=excluded.ease_factor,
+			repetitions=excluded.repetitions
+	`, item.NoteID, item.NextReview.Unix(), item.Interval, item.EaseFactor, item.Repetitions)
+	return err
+}
+
+// GetDueReviews retrieves notes that are due for review.
+func (s *Store) GetDueReviews() ([]*model.Note, error) {
+	now := time.Now().Unix()
+	// Get notes where next_review <= now OR next_review IS NULL (if we want to include unreviewed notes?)
+	// For now, let's only return items that exist in SRS table and are due.
+	// Users can add notes to SRS manually or we can have a policy to auto-add.
+	// Roadmap says: "based on note importance and freshness".
+	// For this iteration, let's stick to items already in SRS or explicitly "stale but important".
+	
+	// Let's just return what is in SRS table and due.
+	query := `
+		SELECT n.id, n.path, n.title, n.hash, n.mod_time
+		FROM notes n
+		JOIN srs_items s ON n.id = s.note_id
+		WHERE s.next_review <= ?
+		ORDER BY s.next_review ASC
+	`
+	rows, err := s.db.Query(query, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notes []*model.Note
+	for rows.Next() {
+		var n model.Note
+		var unixTime int64
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+			return nil, err
+		}
+		n.ModTime = time.Unix(unixTime, 0)
+		notes = append(notes, &n)
+	}
+	return notes, nil
+}
+
+// SaveEmbedding saves the vector embedding for a note.
+func (s *Store) SaveEmbedding(e *model.Embedding) error {
+	vecBytes, err := json.Marshal(e.Vector)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO embeddings (note_id, vector, model)
+		VALUES (?, ?, ?)
+		ON CONFLICT(note_id) DO UPDATE SET
+			vector=excluded.vector,
+			model=excluded.model
+	`, e.NoteID, vecBytes, e.Model)
+	return err
+}
+
+// GetEmbedding retrieves the embedding for a note.
+func (s *Store) GetEmbedding(noteID string) (*model.Embedding, error) {
+	row := s.db.QueryRow(`SELECT note_id, vector, model FROM embeddings WHERE note_id = ?`, noteID)
+	var e model.Embedding
+	var vecBytes []byte
+	err := row.Scan(&e.NoteID, &vecBytes, &e.Model)
+	if err == sql.ErrNoRows {
+		return nil, nil // Not found is okay
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(vecBytes, &e.Vector); err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+// GetAllEmbeddings retrieves all embeddings.
+func (s *Store) GetAllEmbeddings() ([]*model.Embedding, error) {
+	rows, err := s.db.Query(`SELECT note_id, vector, model FROM embeddings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var embeddings []*model.Embedding
+	for rows.Next() {
+		var e model.Embedding
+		var vecBytes []byte
+		if err := rows.Scan(&e.NoteID, &vecBytes, &e.Model); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(vecBytes, &e.Vector); err != nil {
+			continue // Skip malformed?
+		}
+		embeddings = append(embeddings, &e)
+	}
+	return embeddings, nil
 }
