@@ -1,0 +1,10 @@
+{
+    // VS Code Configuration (for use with "Glspc" or similar generic LSP clients)
+    "glspc.languageServer": {
+        "zettelkasten": {
+            "command": "zk",
+            "args": ["lsp"],
+            "filetypes": ["markdown"]
+        }
+    }
+}

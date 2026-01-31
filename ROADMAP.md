@@ -78,14 +78,14 @@ Replacing the Python scripts with a unified binary and adding a rich terminal UI
 
 ### Phase 9: Deep Integration (LSP)
 Making the tool editor-agnostic by implementing the Language Server Protocol.
-- [ ] **LSP Skeleton**:
-    - [ ] Implement basic JSON-RPC 2.0 handling over Stdio.
-    - [ ] Handle `initialize` and `textDocument/didOpen` events.
-- [ ] **Features**:
-    - [ ] **Go to Definition**: `textDocument/definition` handling for `[[WikiLinks]]`.
-    - [ ] **Autocompletion**: `textDocument/completion` offering note titles when typing `[[`.
-    - [ ] **Hover**: `textDocument/hover` showing note preview when hovering a link.
-- [ ] **Editor Config**: Write config snippets for Neovim (native LSP) and VS Code (Generic LSP Client).
+- [x] **LSP Skeleton**:
+    - [x] Implement basic JSON-RPC 2.0 handling over Stdio.
+    - [x] Handle `initialize` and `textDocument/didOpen` events.
+- [x] **Features**:
+    - [x] **Go to Definition**: `textDocument/definition` handling for `[[WikiLinks]]`.
+    - [x] **Autocompletion**: `textDocument/completion` offering note titles when typing `[[`.
+    - [x] **Hover**: `textDocument/hover` showing note preview when hovering a link.
+- [x] **Editor Config**: Write config snippets for Neovim (native LSP) and VS Code (Generic LSP Client).
 
 ### Phase 10: Intelligence & Emergence
 Leveraging the index for advanced discovery features.
