@@ -32,7 +32,11 @@ func Execute() {
 
 func init() {
 	// Global flag for root directory
-	rootCmd.PersistentFlags().StringVar(&rootDir, "dir", ".", "Root directory of the Zettelkasten")
+	defaultDir := "."
+	if envDir := os.Getenv("ZK_PATH"); envDir != "" {
+		defaultDir = envDir
+	}
+	rootCmd.PersistentFlags().StringVar(&rootDir, "dir", defaultDir, "Root directory of the Zettelkasten")
 }
 
 func runNavigator() {

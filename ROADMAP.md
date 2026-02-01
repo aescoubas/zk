@@ -129,3 +129,17 @@ Moving visualization and interaction entirely into the terminal for a seamless w
 - [x] **Usability Polish**:
     - [x] Standardize keyboard shortcuts across all TUI modes.
     - [x] Improve error messages and help text for all commands.
+
+### Phase 14: Enhanced Navigation and Listing
+Refining the core exploration and listing capabilities for better usability.
+- [x] **`zk explore` Enhancements**:
+    - [x] **Root Index**: Open the root of the zettelkasten with an index page that links various sections.
+    - [x] **Syntax Highlighting**: Use syntax highlighting when displaying a note in the explore view.
+- [x] **`zk list` Enhancements**:
+    - [x] **Consistent Formatting**: Ensure the output format is consistent with the rest of the UI.
+    - [x] **Rich Columns**: Display the following columns:
+        - Creation date
+        - Last modification date
+        - Topic
+        - Number of backlinks (incoming links)
+        - Number of outgoing links

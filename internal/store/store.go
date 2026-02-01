@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/escoubas/zk/internal/model"
@@ -235,6 +236,45 @@ func (s *Store) ListNotes() ([]*model.Note, error) {
 		return nil, fmt.Errorf("rows iteration error: %w", err)
 	}
 	return notes, nil
+}
+
+// ListNoteSummaries retrieves all notes with statistics.
+func (s *Store) ListNoteSummaries() ([]*model.NoteSummary, error) {
+	query := `
+		SELECT 
+			n.id, 
+			n.title, 
+			n.mod_time,
+			(SELECT COUNT(*) FROM links WHERE target_id = n.id) AS backlinks,
+			(SELECT COUNT(*) FROM links WHERE source_id = n.id) AS outgoing,
+			(SELECT GROUP_CONCAT(tag, ',') FROM tags WHERE note_id = n.id) AS tags
+		FROM notes n
+		ORDER BY n.mod_time DESC
+	`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []*model.NoteSummary
+	for rows.Next() {
+		var ns model.NoteSummary
+		var unixTime int64
+		var tagsStr sql.NullString // Tags might be null
+
+		if err := rows.Scan(&ns.ID, &ns.Title, &unixTime, &ns.Backlinks, &ns.OutgoingLinks, &tagsStr); err != nil {
+			return nil, err
+		}
+		ns.ModTime = time.Unix(unixTime, 0)
+		if tagsStr.Valid && tagsStr.String != "" {
+			ns.Tags = strings.Split(tagsStr.String, ",")
+		} else {
+			ns.Tags = []string{}
+		}
+		summaries = append(summaries, &ns)
+	}
+	return summaries, nil
 }
 
 // GetNote retrieves a note by ID.

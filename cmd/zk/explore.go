@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/escoubas/zk/internal/model"
 	"github.com/escoubas/zk/internal/store"
@@ -47,15 +48,28 @@ func runExplore(startID string) {
 
 	// Resolve start note
 	var startNote *model.Note
+	
 	if startID != "" {
 		startNote, err = st.GetNote(startID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Note not found: %s\n", startID)
-			// Fallback to random
+		}
+	} else {
+		// Try to find "index" or "readme"
+		candidates := []string{"index", "Index", "readme", "README", "000-index", "Home"}
+		for _, id := range candidates {
+			n, err := st.GetNote(id)
+			if err == nil {
+				startNote = n
+				break
+			}
 		}
 	}
 	
 	if startNote == nil {
+		if startID == "" {
+			fmt.Println("No index note found. Opening random note...")
+		}
 		startNote, err = st.GetRandomNote()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting random note: %v\n", err)
@@ -85,7 +99,7 @@ type exploreModel struct {
 	current  *model.Note
 	history  []string // Stack of IDs
 	
-	incoming []list.Item
+incoming []list.Item
 	outgoing []list.Item
 	
 	listIn   list.Model
@@ -95,6 +109,8 @@ type exploreModel struct {
 	focus    int // focusIncoming, focusContent, focusOutgoing
 	width    int
 	height   int
+	
+	renderer *glamour.TermRenderer
 }
 
 func initializeExploreModel(st *store.Store, root string, start *model.Note) exploreModel {
@@ -116,6 +132,13 @@ func initializeExploreModel(st *store.Store, root string, start *model.Note) exp
 
 	// Init Viewport for content
 	m.viewport = viewport.New(0, 0)
+	
+	// Init Glamour
+	renderer, _ := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(80),
+	)
+	m.renderer = renderer
 
 	m.loadData()
 	return m
@@ -152,7 +175,16 @@ func (m *exploreModel) loadData() {
 	if err == nil {
 		content = string(contentBytes)
 	}
-	m.viewport.SetContent(content)
+	
+	// Render Markdown
+	rendered, err := m.renderer.Render(content)
+	if err != nil {
+		rendered = content // Fallback
+	}
+	
+m.viewport.SetContent(rendered)
+	// Reset scroll
+	m.viewport.GotoTop()
 }
 
 func (m exploreModel) Init() tea.Cmd {
@@ -225,6 +257,14 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.listOut.SetSize(colWidth, listHeight)
 		m.viewport.Width = centerWidth
 		m.viewport.Height = listHeight
+		
+		// Update renderer width
+		m.renderer, _ = glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(centerWidth),
+		)
+		// Re-render content
+		m.loadData()
 	}
 
 	if m.focus == focusIncoming {

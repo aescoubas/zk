@@ -59,3 +59,13 @@ type Metadata struct {
 	// Frontmatter holds the raw key-value pairs from the YAML header.
 	Frontmatter map[string]interface{} `json:"frontmatter"`
 }
+
+// NoteSummary represents a summary of a note for listing purposes.
+type NoteSummary struct {
+	ID            string    `json:"id"`
+	Title         string    `json:"title"`
+	ModTime       time.Time `json:"mod_time"`
+	Tags          []string  `json:"tags"`
+	Backlinks     int       `json:"backlinks"`
+	OutgoingLinks int       `json:"outgoing_links"`
+}

@@ -20,7 +20,7 @@ fi
 # 1. Build
 echo "Building binary from source..."
 cd tools/zk-go
-if go build -ldflags "-s -w" -o ../../bin/zk ./cmd/zk; then
+if go build -tags fts5 -ldflags "-s -w" -o ../../bin/zk ./cmd/zk; then
     echo "Build successful."
 else
     echo "Build failed."
