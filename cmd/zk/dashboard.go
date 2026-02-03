@@ -20,7 +20,7 @@ var dashboardCmd = &cobra.Command{
 	Use:   "dashboard",
 	Short: "Open the Zettelkasten interactive dashboard",
 	Run: func(cmd *cobra.Command, args []string) {
-		runDashboard()
+		runNavigator()
 	},
 }
 
@@ -28,33 +28,7 @@ func init() {
 	rootCmd.AddCommand(dashboardCmd)
 }
 
-func runDashboard() {
-	absRoot, err := filepath.Abs(rootDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	dbPath := filepath.Join(absRoot, ".zk", "index.db")
-
-	st, err := store.NewStore(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening DB (run 'zk index' first): %v\n", err)
-		os.Exit(1)
-	}
-	defer st.Close()
-
-	m, err := NewDashboardModel(st, absRoot)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error initializing dashboard: %v\n", err)
-		os.Exit(1)
-	}
-
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error running dashboard: %v\n", err)
-		os.Exit(1)
-	}
-}
+// runDashboard removed, replaced by runNavigator in navigator.go
 
 type dashboardModel struct {
 	store       *store.Store
@@ -63,10 +37,11 @@ type dashboardModel struct {
 	linkCount   int
 	orphanCount int
 	stubCount   int
-	recents     []*model.Note
+	allNotes    []*model.Note
 	topics      []model.TagCount
 	snippet     string
 	cursor      int
+	offset      int
 	quitting    bool
 	width       int
 	height      int
@@ -81,7 +56,7 @@ func NewDashboardModel(st *store.Store, root string) (dashboardModel, error) {
 	orphans, _ := st.GetOrphanCount()
 	stubs, _ := st.GetStubCount()
 
-	recents, err := st.GetRecentNotes(8)
+	allNotes, err := st.ListNotes()
 	if err != nil {
 		return dashboardModel{}, err
 	}
@@ -96,10 +71,11 @@ func NewDashboardModel(st *store.Store, root string) (dashboardModel, error) {
 		linkCount:   linkCount,
 		orphanCount: orphans,
 		stubCount:   stubs,
-		recents:     recents,
+		allNotes:    allNotes,
 		topics:      topics,
 		snippet:     snippet,
 		cursor:      0,
+		offset:      0,
 		width:       80,
 		height:      24,
 	}, nil
@@ -139,14 +115,25 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
+				if m.cursor < m.offset {
+					m.offset = m.cursor
+				}
 			}
 		case "down", "j":
-			if m.cursor < len(m.recents)-1 {
+			if m.cursor < len(m.allNotes)-1 {
 				m.cursor++
+				// Estimate list height (height - title - stats - help - borders ~ 14 lines)
+				listHeight := m.height - 14
+				if listHeight < 1 {
+					listHeight = 1
+				}
+				if m.cursor >= m.offset+listHeight {
+					m.offset++
+				}
 			}
 		case "enter":
-			if len(m.recents) > 0 {
-				note := m.recents[m.cursor]
+			if len(m.allNotes) > 0 {
+				note := m.allNotes[m.cursor]
 				return m, func() tea.Msg { return navigateToExploreMsg{note: note} }
 			}
 		case "r":
@@ -237,20 +224,54 @@ func (m dashboardModel) View() string {
 	}
 	topicsBox := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("Top Topics"), topicsContent))
 
-	// Recents Column
-	recentsContent := ""
-	for i, n := range m.recents {
-		line := fmt.Sprintf("%s", n.Title)
-		if len(line) > colWidth-2 { // Truncate to fit column
-			line = line[:colWidth-5] + "..."
+	// All Notes Column
+	allNotesContent := ""
+	listHeight := m.height - 14
+	if listHeight < 1 {
+		listHeight = 1
+	}
+	start := m.offset
+	end := m.offset + listHeight
+	if end > len(m.allNotes) {
+		end = len(m.allNotes)
+	}
+
+	for i := start; i < end; i++ {
+		n := m.allNotes[i]
+		
+		// Build line with Title and Summary
+		avail := colWidth - 4 // Padding/Border safety
+		if avail < 10 {
+			avail = 10
 		}
+		
+		title := n.Title
+		summary := strings.ReplaceAll(n.Summary, "\n", " ") // Ensure single line
+		
+		line := title
+		if len(title) < avail && summary != "" {
+			// Determine space for summary
+			// separator " · " (3 chars)
+			rem := avail - len(title) - 3
+			if rem > 5 {
+				if len(summary) > rem {
+					summary = summary[:rem-1] + "…"
+				}
+				line = fmt.Sprintf("%s · %s", title, summary)
+			}
+		}
+
+		if len(line) > avail {
+			line = line[:avail-1] + "…"
+		}
+
 		if i == m.cursor {
-			recentsContent += selectedStyle.Render(line) + "\n"
+			allNotesContent += selectedStyle.Render(line) + "\n"
 		} else {
-			recentsContent += itemStyle.Render(line) + "\n"
+			allNotesContent += itemStyle.Render(line) + "\n"
 		}
 	}
-	recentsBox := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("Recents"), recentsContent))
+	recentsBox := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("All Notes"), allNotesContent))
 
 	// Combine Columns
 	// Center the columns horizontally

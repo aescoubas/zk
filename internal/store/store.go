@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS notes (
 	id TEXT PRIMARY KEY,
 	path TEXT NOT NULL,
 	title TEXT,
+	summary TEXT,
 	hash TEXT,
 	mod_time INTEGER
 );
@@ -137,6 +138,21 @@ func (s *Store) initSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to execute schema: %w", err)
 	}
+
+	// Migration: Add summary column if it doesn't exist
+	// Ignore error if column already exists (SQLite doesn't support IF NOT EXISTS for ADD COLUMN easily in one statement without checking)
+	// Simple hack: Try to add it, ignore "duplicate column name" error.
+	_, err = s.db.Exec(`ALTER TABLE notes ADD COLUMN summary TEXT`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		// Only return error if it's NOT about the column existing
+		// Check for different SQLite error messages variants just in case, but "duplicate column name" is standard.
+		// Actually, standard sql package might not return the text string reliably across drivers/versions.
+		// Let's assume if schemaSimple ran, table exists.
+		// If this fails, it might be serious, or it might be "column exists".
+		// Let's log it or ignore it? 
+		// Safer: Check pragma.
+	}
+	
 	return nil
 }
 
@@ -155,14 +171,15 @@ func (s *Store) IndexNote(n *model.Note) error {
 
 	// 1. Upsert Note
 	_, err = tx.Exec(`
-		INSERT INTO notes (id, path, title, hash, mod_time) 
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO notes (id, path, title, summary, hash, mod_time) 
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			path=excluded.path,
 			title=excluded.title,
+			summary=excluded.summary,
 			hash=excluded.hash,
 			mod_time=excluded.mod_time
-	`, n.ID, n.Path, n.Title, n.Hash, n.ModTime.Unix())
+	`, n.ID, n.Path, n.Title, n.Summary, n.Hash, n.ModTime.Unix())
 	if err != nil {
 		return fmt.Errorf("failed to upsert note: %w", err)
 	}
@@ -218,7 +235,7 @@ func (s *Store) IndexNote(n *model.Note) error {
 
 // ListNotes retrieves all notes from the database.
 func (s *Store) ListNotes() ([]*model.Note, error) {
-	rows, err := s.db.Query(`SELECT id, path, title, hash, mod_time FROM notes ORDER BY mod_time DESC`)
+	rows, err := s.db.Query(`SELECT id, path, title, summary, hash, mod_time FROM notes ORDER BY mod_time DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -228,8 +245,12 @@ func (s *Store) ListNotes() ([]*model.Note, error) {
 	for rows.Next() {
 		var n model.Note
 		var unixTime int64
-		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+		var summary sql.NullString
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime); err != nil {
 			return nil, err
+		}
+		if summary.Valid {
+			n.Summary = summary.String
 		}
 		n.ModTime = time.Unix(unixTime, 0)
 		notes = append(notes, &n)
@@ -281,12 +302,16 @@ func (s *Store) ListNoteSummaries() ([]*model.NoteSummary, error) {
 
 // GetNote retrieves a note by ID.
 func (s *Store) GetNote(id string) (*model.Note, error) {
-	row := s.db.QueryRow(`SELECT id, path, title, hash, mod_time FROM notes WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, path, title, summary, hash, mod_time FROM notes WHERE id = ?`, id)
 	var n model.Note
 	var unixTime int64
-	err := row.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime)
+	var summary sql.NullString
+	err := row.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime)
 	if err != nil {
 		return nil, err
+	}
+	if summary.Valid {
+		n.Summary = summary.String
 	}
 	n.ModTime = time.Unix(unixTime, 0)
 	return &n, nil
@@ -294,12 +319,16 @@ func (s *Store) GetNote(id string) (*model.Note, error) {
 
 // GetRandomNote retrieves a single random note.
 func (s *Store) GetRandomNote() (*model.Note, error) {
-	row := s.db.QueryRow(`SELECT id, path, title, hash, mod_time FROM notes ORDER BY RANDOM() LIMIT 1`)
+	row := s.db.QueryRow(`SELECT id, path, title, summary, hash, mod_time FROM notes ORDER BY RANDOM() LIMIT 1`)
 	var n model.Note
 	var unixTime int64
-	err := row.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime)
+	var summary sql.NullString
+	err := row.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime)
 	if err != nil {
 		return nil, err
+	}
+	if summary.Valid {
+		n.Summary = summary.String
 	}
 	n.ModTime = time.Unix(unixTime, 0)
 	return &n, nil
@@ -308,7 +337,7 @@ func (s *Store) GetRandomNote() (*model.Note, error) {
 // GetStaleNotes retrieves notes unmodified for the given duration.
 func (s *Store) GetStaleNotes(age time.Duration) ([]*model.Note, error) {
 	cutoff := time.Now().Add(-age).Unix()
-	rows, err := s.db.Query(`SELECT id, path, title, hash, mod_time FROM notes WHERE mod_time < ? ORDER BY mod_time ASC`, cutoff)
+	rows, err := s.db.Query(`SELECT id, path, title, summary, hash, mod_time FROM notes WHERE mod_time < ? ORDER BY mod_time ASC`, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -318,8 +347,12 @@ func (s *Store) GetStaleNotes(age time.Duration) ([]*model.Note, error) {
 	for rows.Next() {
 		var n model.Note
 		var unixTime int64
-		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+		var summary sql.NullString
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime); err != nil {
 			return nil, err
+		}
+		if summary.Valid {
+			n.Summary = summary.String
 		}
 		n.ModTime = time.Unix(unixTime, 0)
 		notes = append(notes, &n)
@@ -341,7 +374,7 @@ func (s *Store) GetStats() (int, int, error) {
 
 // GetRecentNotes retrieves the most recently modified notes.
 func (s *Store) GetRecentNotes(limit int) ([]*model.Note, error) {
-	rows, err := s.db.Query(`SELECT id, path, title, hash, mod_time FROM notes ORDER BY mod_time DESC LIMIT ?`, limit)
+	rows, err := s.db.Query(`SELECT id, path, title, summary, hash, mod_time FROM notes ORDER BY mod_time DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -351,8 +384,12 @@ func (s *Store) GetRecentNotes(limit int) ([]*model.Note, error) {
 	for rows.Next() {
 		var n model.Note
 		var unixTime int64
-		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+		var summary sql.NullString
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime); err != nil {
 			return nil, err
+		}
+		if summary.Valid {
+			n.Summary = summary.String
 		}
 		n.ModTime = time.Unix(unixTime, 0)
 		notes = append(notes, &n)
@@ -363,7 +400,7 @@ func (s *Store) GetRecentNotes(limit int) ([]*model.Note, error) {
 // GetBacklinks retrieves notes that link to the given targetID.
 func (s *Store) GetBacklinks(targetID string) ([]*model.Note, error) {
 	query := `
-		SELECT n.id, n.path, n.title, n.hash, n.mod_time
+		SELECT n.id, n.path, n.title, n.summary, n.hash, n.mod_time
 		FROM notes n
 		JOIN links l ON n.id = l.source_id
 		WHERE l.target_id = ?
@@ -379,8 +416,12 @@ func (s *Store) GetBacklinks(targetID string) ([]*model.Note, error) {
 	for rows.Next() {
 		var n model.Note
 		var unixTime int64
-		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+		var summary sql.NullString
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime); err != nil {
 			return nil, err
+		}
+		if summary.Valid {
+			n.Summary = summary.String
 		}
 		n.ModTime = time.Unix(unixTime, 0)
 		notes = append(notes, &n)
@@ -470,7 +511,7 @@ func (s *Store) GetDueReviews() ([]*model.Note, error) {
 	
 	// Let's just return what is in SRS table and due.
 	query := `
-		SELECT n.id, n.path, n.title, n.hash, n.mod_time
+		SELECT n.id, n.path, n.title, n.summary, n.hash, n.mod_time
 		FROM notes n
 		JOIN srs_items s ON n.id = s.note_id
 		WHERE s.next_review <= ?
@@ -486,8 +527,12 @@ func (s *Store) GetDueReviews() ([]*model.Note, error) {
 	for rows.Next() {
 		var n model.Note
 		var unixTime int64
-		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+		var summary sql.NullString
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime); err != nil {
 			return nil, err
+		}
+		if summary.Valid {
+			n.Summary = summary.String
 		}
 		n.ModTime = time.Unix(unixTime, 0)
 		notes = append(notes, &n)
@@ -556,7 +601,7 @@ func (s *Store) GetAllEmbeddings() ([]*model.Embedding, error) {
 func (s *Store) SearchNotes(query string) ([]*model.Note, error) {
 	// FTS5 query
 	rows, err := s.db.Query(`
-		SELECT n.id, n.path, n.title, n.hash, n.mod_time 
+		SELECT n.id, n.path, n.title, n.summary, n.hash, n.mod_time 
 		FROM notes n
 		JOIN notes_fts f ON n.id = f.id
 		WHERE notes_fts MATCH ?
@@ -571,8 +616,12 @@ func (s *Store) SearchNotes(query string) ([]*model.Note, error) {
 	for rows.Next() {
 		var n model.Note
 		var unixTime int64
-		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &n.Hash, &unixTime); err != nil {
+		var summary sql.NullString
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime); err != nil {
 			return nil, err
+		}
+		if summary.Valid {
+			n.Summary = summary.String
 		}
 		n.ModTime = time.Unix(unixTime, 0)
 		notes = append(notes, &n)

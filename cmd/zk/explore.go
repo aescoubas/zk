@@ -290,8 +290,22 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		
-		colWidth := msg.Width / 4 
-		centerWidth := msg.Width - (3 * colWidth) - 6
+		// Calculate available width for content by subtracting borders and padding
+		// 3 side columns: 2 chars border each = 6
+		// 1 center column: 2 chars border + 2 chars padding = 4
+		// Total overhead = 10
+		availableWidth := msg.Width - 10
+		if availableWidth < 0 {
+			availableWidth = 0
+		}
+		
+		// Assign ~45% to center, rest divided by 3 for sides (~18% each)
+		centerWidth := int(float64(availableWidth) * 0.45)
+		colWidth := (availableWidth - centerWidth) / 3
+		
+		// Recalculate center to absorb rounding errors and fill space
+		centerWidth = availableWidth - (colWidth * 3)
+
 		if centerWidth < 20 {
 			centerWidth = 20
 		}

@@ -12,6 +12,8 @@ type Note struct {
 	Path string `json:"path"`
 	// Title is the display title of the note.
 	Title string `json:"title"`
+	// Summary is a short description extracted from the content.
+	Summary string `json:"summary"`
 	// RawContent is the full text content of the note (for indexing/FTS).
 	RawContent string `json:"raw_content"`
 	// Hash is a checksum of the file content to detect changes.

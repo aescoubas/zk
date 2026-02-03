@@ -81,11 +81,49 @@ func (p *Parser) ParseFile(root, path string) (*model.Note, error) {
 	}
 
 	// Extract Title
-	// Strategy: Use 'title' from frontmatter, or filename.
+	// Strategy: Use 'title' from frontmatter, first H1, or filename.
 	title := ""
 	if t, ok := frontmatter["title"].(string); ok {
 		title = t
-	} else {
+	}
+
+	// Extract Summary and fallback Title
+	lines := strings.Split(string(content), "\n")
+	summary := ""
+	
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "---") {
+			continue // Skip frontmatter delimiters (naive)
+		}
+		// Skip frontmatter content if we haven't seen the second --- yet? 
+		// Goldmark handles parsing, but here we are iterating lines raw.
+		// For robustness, maybe relying on Goldmark AST is better, but let's stick to simple heuristics for now.
+		// Assumes frontmatter is at the top.
+		
+		if strings.HasPrefix(line, "# ") {
+			if title == "" {
+				title = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			continue // Skip other headers for summary
+		}
+		
+		// First text line is summary
+		if summary == "" {
+			summary = line
+			if len(summary) > 150 {
+				summary = summary[:147] + "..."
+			}
+		}
+	}
+
+	if title == "" {
 		// Fallback to filename without extension
 		title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
@@ -101,6 +139,7 @@ func (p *Parser) ParseFile(root, path string) (*model.Note, error) {
 		ID:         id,
 		Path:       path,
 		Title:      title,
+		Summary:    summary,
 		RawContent: string(content),
 		Hash:       hash,
 		ModTime:    fi.ModTime(),
