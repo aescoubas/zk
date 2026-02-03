@@ -44,17 +44,17 @@ const (
 )
 
 type navigatorModel struct {
-	state     sessionState
-	store     *store.Store
-	root      string
+	state sessionState
+	store *store.Store
+	root  string
 
 	dashboard dashboardModel
 	explore   exploreModel
 	review    reviewModel
 	search    searchModel
-	
-	width     int
-	height    int
+
+	width  int
+	height int
 }
 
 func runNavigator() {
@@ -108,30 +108,28 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Propagate resize to all models
-		// Dashboard doesn't need explicit resize in current impl, but good to pass
-		
-		// Explore needs resize
-		if m.state == stateExplore {
-			m.explore, cmd = updateExplore(m.explore, msg)
-		}
-		
-		// Review needs resize
-		if m.state == stateReview {
-			m.review, cmd = updateReview(m.review, msg)
-		}
 
-		// Search needs resize
-		if m.state == stateSearch {
+		// Always update dashboard size as it persists
+		var dashCmd tea.Cmd
+		m.dashboard, dashCmd = updateDashboard(m.dashboard, msg)
+
+		switch m.state {
+		case stateDashboard:
+			cmd = dashCmd
+		case stateExplore:
+			m.explore, cmd = updateExplore(m.explore, msg)
+		case stateReview:
+			m.review, cmd = updateReview(m.review, msg)
+		case stateSearch:
 			m.search, cmd = updateSearch(m.search, msg)
 		}
-		
+
 		return m, cmd
 
 	case navigateToDashboardMsg:
 		m.state = stateDashboard
 		return m, nil
-		
+
 	case navigateToSearchMsg:
 		m.state = stateSearch
 		// Always re-init search to refresh data? Or just once?
@@ -148,25 +146,25 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Resize immediately
 			m.explore, _ = updateExplore(m.explore, tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		} else {
-            // Random or default?
-            // If msg.note is nil, maybe we just switch state if explore is already init?
-            // Or fetch random
-            if m.explore.current == nil {
-                n, _ := m.store.GetRandomNote()
-                if n != nil {
-                   m.explore = initializeExploreModel(m.store, m.root, n)
-                   m.explore, _ = updateExplore(m.explore, tea.WindowSizeMsg{Width: m.width, Height: m.height})
-                }
-            }
-        }
+			// Random or default?
+			// If msg.note is nil, maybe we just switch state if explore is already init?
+			// Or fetch random
+			if m.explore.current == nil {
+				n, _ := m.store.GetRandomNote()
+				if n != nil {
+					m.explore = initializeExploreModel(m.store, m.root, n)
+					m.explore, _ = updateExplore(m.explore, tea.WindowSizeMsg{Width: m.width, Height: m.height})
+				}
+			}
+		}
 		return m, nil
-		
+
 	case navigateToReviewMsg:
 		m.state = stateReview
 		// Init review
 		notes, _ := m.store.GetDueReviews()
 		if len(notes) == 0 {
-			// Fallback to stale notes logic? 
+			// Fallback to stale notes logic?
 			// Copied from review.go logic roughly
 			// For now just pass empty list, reviewModel handles "No reviews"
 		}

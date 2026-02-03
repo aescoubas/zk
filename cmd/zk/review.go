@@ -121,7 +121,8 @@ type reviewModel struct {
 	viewport viewport.Model
 	quitting bool
 	showing  bool // true = content shown, false = just title (front/back card style? or just show all?)
-	// For now, let's show all content immediately, as Zettels are "atomic" and should be read.
+	width    int
+	height   int
 }
 
 func newReviewModel(st *store.Store, notes []*model.Note, root string) reviewModel {
@@ -130,17 +131,19 @@ func newReviewModel(st *store.Store, notes []*model.Note, root string) reviewMod
 		queue:   notes,
 		root:    root,
 		showing: true,
+		width:   80,
+		height:  24,
 	}
 	if len(m.queue) > 0 {
 		m.current = m.queue[0]
 		m.queue = m.queue[1:]
 	}
 	
-vp := viewport.New(80, 20)
+	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).Padding(1, 2)
 	m.viewport = vp
 	
-m.updateContent()
+	m.updateContent()
 	return m
 }
 
@@ -201,6 +204,8 @@ func (m reviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 		m.viewport.Width = msg.Width - 4
 		m.viewport.Height = msg.Height - 10
 	}
@@ -240,9 +245,11 @@ func (m reviewModel) View() string {
 
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render
 
-	return fmt.Sprintf(
+	content := fmt.Sprintf(
 		"\n%s\n\n%s\n",
 		m.viewport.View(),
 		helpStyle("Rate recall: 1 (Fail) - 5 (Perfect) | q: Quit | Arrows/jk: Scroll"),
 	)
+	
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }

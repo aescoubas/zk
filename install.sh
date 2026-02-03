@@ -2,11 +2,13 @@
 set -e
 
 # Default install prefix
-PREFIX="${1:-/home/escoubas/.local}"
+PREFIX="${1:-/usr/local}"
 BIN_DIR="$PREFIX/bin"
 
 # Ensure bin directory exists
-mkdir -p "$BIN_DIR"
+if [ ! -d "$BIN_DIR" ]; then
+    mkdir -p "$BIN_DIR" 2>/dev/null || sudo mkdir -p "$BIN_DIR"
+fi
 
 # ANSI colors
 GREEN='\033[0;32m'

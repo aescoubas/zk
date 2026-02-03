@@ -367,5 +367,6 @@ func (m exploreModel) View() string {
 	centerContent := m.viewport.View()
 	centerView := centerStyle.Render(fmt.Sprintf("%s\n\n%s", centerHeader, centerContent))
 	
-	return lipgloss.JoinHorizontal(lipgloss.Top, inView, centerView, outView, simView)
+	content := lipgloss.JoinHorizontal(lipgloss.Top, inView, centerView, outView, simView)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
