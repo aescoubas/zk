@@ -55,7 +55,6 @@ func runExplore(startID string) {
 			fmt.Fprintf(os.Stderr, "Note not found: %s\n", startID)
 		}
 	} else {
-		// Try to find "index" or "readme"
 		candidates := []string{"index", "Index", "readme", "README", "000-index", "Home"}
 		for _, id := range candidates {
 			n, err := st.GetNote(id)
@@ -90,6 +89,7 @@ const (
 	focusIncoming = iota
 	focusContent
 	focusOutgoing
+	focusSimilar
 )
 
 type exploreModel struct {
@@ -97,16 +97,18 @@ type exploreModel struct {
 	root     string
 	
 	current  *model.Note
-	history  []string // Stack of IDs
+	history  []string
 	
-incoming []list.Item
+	incoming []list.Item
 	outgoing []list.Item
+	similar  []list.Item
 	
-	listIn   list.Model
-	listOut  list.Model
-	viewport viewport.Model
+	listIn      list.Model
+	listOut     list.Model
+	listSimilar list.Model
+	viewport    viewport.Model
 	
-	focus    int // focusIncoming, focusContent, focusOutgoing
+	focus    int
 	width    int
 	height   int
 	
@@ -125,17 +127,24 @@ func initializeExploreModel(st *store.Store, root string, start *model.Note) exp
 	m.listIn = list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	m.listIn.Title = "Backlinks"
 	m.listIn.SetShowHelp(false)
+	m.listIn.Styles.Title = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxAqua)).Bold(true)
 	
 	m.listOut = list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	m.listOut.Title = "Links To"
 	m.listOut.SetShowHelp(false)
+	m.listOut.Styles.Title = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxBlue)).Bold(true)
 
-	// Init Viewport for content
+	m.listSimilar = list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	m.listSimilar.Title = "Similar"
+	m.listSimilar.SetShowHelp(false)
+	m.listSimilar.Styles.Title = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxPurple)).Bold(true)
+
+	// Init Viewport
 	m.viewport = viewport.New(0, 0)
 	
-	// Init Glamour
+	// Init Glamour with Gruvbox Style
 	renderer, _ := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStylesFromJSONBytes([]byte(gruvboxStyle)),
 		glamour.WithWordWrap(80),
 	)
 	m.renderer = renderer
@@ -169,27 +178,44 @@ func (m *exploreModel) loadData() {
 	}
 	m.listOut.SetItems(itemsOut)
 
-	// 3. Content Viewport
+	// 3. Similar
+	similars, err := m.store.FindSimilar(m.current.ID, 10)
+	var itemsSim []list.Item
+	if err == nil {
+		for _, s := range similars {
+			itemsSim = append(itemsSim, similarItem{note: s.Note, score: s.Score})
+		}
+	}
+	m.listSimilar.SetItems(itemsSim)
+
+	// 4. Content Viewport
 	contentBytes, err := os.ReadFile(filepath.Join(m.root, m.current.Path))
 	content := ""
 	if err == nil {
 		content = string(contentBytes)
 	}
 	
-	// Render Markdown
 	rendered, err := m.renderer.Render(content)
 	if err != nil {
-		rendered = content // Fallback
+		rendered = content
 	}
 	
 m.viewport.SetContent(rendered)
-	// Reset scroll
 	m.viewport.GotoTop()
 }
 
 func (m exploreModel) Init() tea.Cmd {
 	return nil
 }
+
+type similarItem struct {
+	note  *model.Note
+	score float64
+}
+
+func (i similarItem) Title() string       { return fmt.Sprintf("%.2f %s", i.score, i.note.Title) }
+func (i similarItem) Description() string { return i.note.ID }
+func (i similarItem) FilterValue() string { return i.note.Title }
 
 func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
@@ -198,21 +224,20 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
-			return m, tea.Quit
+			return m, func() tea.Msg { return navigateToDashboardMsg{} }
 		case "tab":
-			m.focus = (m.focus + 1) % 3
+			m.focus = (m.focus + 1) % 4
 		case "shift+tab":
-			m.focus = (m.focus - 1 + 3) % 3
+			m.focus = (m.focus - 1 + 4) % 4
 		case "left", "h":
 			if m.focus > 0 {
 				m.focus--
 			}
 		case "right", "l":
-			if m.focus < 2 {
+			if m.focus < 3 {
 				m.focus++
 			}
 		case "enter":
-			// Navigate to selected
 			var selected *model.Note
 			if m.focus == focusIncoming {
 				if i, ok := m.listIn.SelectedItem().(item); ok {
@@ -222,6 +247,10 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if i, ok := m.listOut.SelectedItem().(item); ok {
 					selected = i.note
 				}
+			} else if m.focus == focusSimilar {
+				if i, ok := m.listSimilar.SelectedItem().(similarItem); ok {
+					selected = i.note
+				}
 			}
 			
 			if selected != nil && selected.Path != "" {
@@ -229,11 +258,22 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.current = selected
 				m.loadData()
 			}
+		case "+", "a":
+			if m.focus == focusSimilar {
+				if i, ok := m.listSimilar.SelectedItem().(similarItem); ok {
+					f, err := os.OpenFile(filepath.Join(m.root, m.current.Path), os.O_APPEND|os.O_WRONLY, 0644)
+					if err == nil {
+						link := fmt.Sprintf("\n- Related: [[%s]]\n", i.note.Title) 
+						f.WriteString(link)
+						f.Close()
+						m.loadData()
+					}
+				}
+			}
 		case "backspace":
 			if len(m.history) > 0 {
 				prevID := m.history[len(m.history)-1]
 				m.history = m.history[:len(m.history)-1]
-				
 				n, err := m.store.GetNote(prevID)
 				if err == nil {
 					m.current = n
@@ -248,22 +288,26 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		
-		colWidth := msg.Width / 4
-		centerWidth := msg.Width - (2 * colWidth) - 4
+		colWidth := msg.Width / 4 
+		centerWidth := msg.Width - (3 * colWidth) - 6
+		if centerWidth < 20 {
+			centerWidth = 20
+		}
 		
 		listHeight := msg.Height - 4
 		
 		m.listIn.SetSize(colWidth, listHeight)
 		m.listOut.SetSize(colWidth, listHeight)
+		m.listSimilar.SetSize(colWidth, listHeight)
+		
 		m.viewport.Width = centerWidth
 		m.viewport.Height = listHeight
 		
-		// Update renderer width
+		// Update renderer width with Gruvbox style
 		m.renderer, _ = glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
+			glamour.WithStylesFromJSONBytes([]byte(gruvboxStyle)),
 			glamour.WithWordWrap(centerWidth),
 		)
-		// Re-render content
 		m.loadData()
 	}
 
@@ -271,6 +315,8 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.listIn, cmd = m.listIn.Update(msg)
 	} else if m.focus == focusOutgoing {
 		m.listOut, cmd = m.listOut.Update(msg)
+	} else if m.focus == focusSimilar {
+		m.listSimilar, cmd = m.listSimilar.Update(msg)
 	} else {
 		m.viewport, cmd = m.viewport.Update(msg)
 	}
@@ -279,11 +325,11 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m exploreModel) View() string {
-	// Styles
-	activeBorder := lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62"))
-	inactiveBorder := lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240"))
+	// Styles using Gruvbox Colors
+	activeBorder := lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(GruvboxOrangeBright))
+	inactiveBorder := lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(GruvboxGray))
 	
-	var inStyle, outStyle, centerStyle lipgloss.Style
+	var inStyle, outStyle, simStyle, centerStyle lipgloss.Style
 	
 	if m.focus == focusIncoming {
 		inStyle = activeBorder
@@ -297,6 +343,12 @@ func (m exploreModel) View() string {
 		outStyle = inactiveBorder
 	}
 
+	if m.focus == focusSimilar {
+		simStyle = activeBorder
+	} else {
+		simStyle = inactiveBorder
+	}
+
 	if m.focus == focusContent {
 		centerStyle = activeBorder.Copy().Padding(0, 1)
 	} else {
@@ -306,11 +358,12 @@ func (m exploreModel) View() string {
 	// Render
 	inView := inStyle.Render(m.listIn.View())
 	outView := outStyle.Render(m.listOut.View())
+	simView := simStyle.Render(m.listSimilar.View())
 	
 	// Center Header
-	centerHeader := lipgloss.NewStyle().Bold(true).Render(m.current.Title)
+	centerHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(GruvboxYellowBright)).Render(m.current.Title)
 	centerContent := m.viewport.View()
 	centerView := centerStyle.Render(fmt.Sprintf("%s\n\n%s", centerHeader, centerContent))
 	
-	return lipgloss.JoinHorizontal(lipgloss.Top, inView, centerView, outView)
+	return lipgloss.JoinHorizontal(lipgloss.Top, inView, centerView, outView, simView)
 }

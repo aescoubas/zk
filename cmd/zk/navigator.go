@@ -1,0 +1,201 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/escoubas/zk/internal/model"
+	"github.com/escoubas/zk/internal/store"
+	"github.com/spf13/cobra"
+)
+
+// Messages for navigation
+type navigateToExploreMsg struct {
+	note *model.Note
+}
+
+type navigateToDashboardMsg struct{}
+
+type navigateToReviewMsg struct{}
+
+var navCmd = &cobra.Command{
+	Use:   "nav",
+	Short: "Open the unified Zettelkasten Navigator",
+	Run: func(cmd *cobra.Command, args []string) {
+		runNavigator()
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(navCmd)
+}
+
+type sessionState int
+
+const (
+	stateDashboard sessionState = iota
+	stateExplore
+	stateReview
+)
+
+type navigatorModel struct {
+	state     sessionState
+	store     *store.Store
+	root      string
+
+	dashboard dashboardModel
+	explore   exploreModel
+	review    reviewModel
+	
+	width     int
+	height    int
+}
+
+func runNavigator() {
+	absRoot, err := filepath.Abs(rootDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	dbPath := filepath.Join(absRoot, ".zk", "index.db")
+
+	st, err := store.NewStore(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening DB (run 'zk index' first): %v\n", err)
+		os.Exit(1)
+	}
+	defer st.Close()
+
+	// Initialize Dashboard data
+	dash, err := NewDashboardModel(st, absRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing dashboard: %v\n", err)
+		os.Exit(1)
+	}
+
+	m := navigatorModel{
+		state:     stateDashboard,
+		store:     st,
+		root:      absRoot,
+		dashboard: dash,
+	}
+
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error running navigator: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func (m navigatorModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		// Propagate resize to all models
+		// Dashboard doesn't need explicit resize in current impl, but good to pass
+		
+		// Explore needs resize
+		if m.state == stateExplore {
+			m.explore, cmd = updateExplore(m.explore, msg)
+		}
+		
+		// Review needs resize
+		if m.state == stateReview {
+			m.review, cmd = updateReview(m.review, msg)
+		}
+		
+		return m, cmd
+
+	case navigateToDashboardMsg:
+		m.state = stateDashboard
+		return m, nil
+		
+	case navigateToExploreMsg:
+		m.state = stateExplore
+		if msg.note != nil {
+			// Initialize explore with note
+			m.explore = initializeExploreModel(m.store, m.root, msg.note)
+			// Resize immediately
+			m.explore, _ = updateExplore(m.explore, tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		} else {
+            // Random or default?
+            // If msg.note is nil, maybe we just switch state if explore is already init?
+            // Or fetch random
+            if m.explore.current == nil {
+                n, _ := m.store.GetRandomNote()
+                if n != nil {
+                   m.explore = initializeExploreModel(m.store, m.root, n)
+                   m.explore, _ = updateExplore(m.explore, tea.WindowSizeMsg{Width: m.width, Height: m.height})
+                }
+            }
+        }
+		return m, nil
+		
+	case navigateToReviewMsg:
+		m.state = stateReview
+		// Init review
+		notes, _ := m.store.GetDueReviews()
+		if len(notes) == 0 {
+			// Fallback to stale notes logic? 
+			// Copied from review.go logic roughly
+			// For now just pass empty list, reviewModel handles "No reviews"
+		}
+		m.review = newReviewModel(m.store, notes, m.root)
+		// Resize
+		m.review, _ = updateReview(m.review, tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		return m, nil
+	}
+
+	// Delegate to sub-models based on state
+	switch m.state {
+	case stateDashboard:
+		m.dashboard, cmd = updateDashboard(m.dashboard, msg)
+	case stateExplore:
+		m.explore, cmd = updateExplore(m.explore, msg)
+	case stateReview:
+		m.review, cmd = updateReview(m.review, msg)
+	}
+
+	return m, cmd
+}
+
+func (m navigatorModel) View() string {
+	switch m.state {
+	case stateDashboard:
+		return m.dashboard.View()
+	case stateExplore:
+		return m.explore.View()
+	case stateReview:
+		return m.review.View()
+	}
+	return ""
+}
+
+// Helpers
+func updateDashboard(m dashboardModel, msg tea.Msg) (dashboardModel, tea.Cmd) {
+	mod, cmd := m.Update(msg)
+	return mod.(dashboardModel), cmd
+}
+
+func updateExplore(m exploreModel, msg tea.Msg) (exploreModel, tea.Cmd) {
+	mod, cmd := m.Update(msg)
+	return mod.(exploreModel), cmd
+}
+
+func updateReview(m reviewModel, msg tea.Msg) (reviewModel, tea.Cmd) {
+	mod, cmd := m.Update(msg)
+	return mod.(reviewModel), cmd
+}

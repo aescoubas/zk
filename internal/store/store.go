@@ -7,9 +7,11 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/escoubas/zk/internal/llm"
 	"github.com/escoubas/zk/internal/model"
 	_ "github.com/mattn/go-sqlite3" // Import for side effects
 )
@@ -576,4 +578,99 @@ func (s *Store) SearchNotes(query string) ([]*model.Note, error) {
 		notes = append(notes, &n)
 	}
 	return notes, nil
+}
+
+// FindSimilar finds notes semantically similar to the target note.
+func (s *Store) FindSimilar(targetID string, limit int) ([]model.SimilarNote, error) {
+	// 1. Get Target Embedding
+	targetEmb, err := s.GetEmbedding(targetID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get target embedding: %w", err)
+	}
+
+	// 2. Get All Embeddings
+	// Optimization: In a real DB, we'd use a vector index (sqlite-vss). 
+	// Here we load all (slow for large DBs, fine for personal ZK).
+	allEmbs, err := s.GetAllEmbeddings()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load embeddings: %w", err)
+	}
+
+	// 3. Compute Similarity
+	var matches []model.SimilarNote
+	for _, e := range allEmbs {
+		if e.NoteID == targetID {
+			continue
+		}
+		score := llm.CosineSimilarity(targetEmb.Vector, e.Vector)
+		
+		// Only keep relevant matches? Or return top N?
+		// Let's filter slightly to avoid garbage
+		if score > 0.3 { // Threshold?
+			// We need the Note object. 
+			// Performance: Getting note for every match is slow.
+			// Better: Sort first, then fetch top N notes.
+			matches = append(matches, model.SimilarNote{
+				Note: &model.Note{ID: e.NoteID}, // Temporary placeholder
+				Score: score,
+			})
+		}
+	}
+
+	// 4. Sort
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].Score > matches[j].Score
+	})
+
+	// 5. Limit
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+
+	// 6. Fill Note Details
+	for i := range matches {
+		n, err := s.GetNote(matches[i].Note.ID)
+		if err == nil {
+			matches[i].Note = n
+		} else {
+			matches[i].Note.Title = matches[i].Note.ID // Fallback
+		}
+	}
+
+	return matches, nil
+}
+
+// GetTopTags returns the most frequent tags.
+func (s *Store) GetTopTags(limit int) ([]model.TagCount, error) {
+	rows, err := s.db.Query(`SELECT tag, count(*) as c FROM tags GROUP BY tag ORDER BY c DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tags []model.TagCount
+	for rows.Next() {
+		var t model.TagCount
+		if err := rows.Scan(&t.Tag, &t.Count); err != nil {
+			return nil, err
+		}
+		tags = append(tags, t)
+	}
+	return tags, nil
+}
+
+// GetOrphanCount returns the number of notes with zero backlinks.
+func (s *Store) GetOrphanCount() (int, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT count(*) FROM notes n 
+		WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.target_id = n.id)
+	`).Scan(&count)
+	return count, err
+}
+
+// GetStubCount returns the number of short notes (e.g. < 100 chars in FTS).
+func (s *Store) GetStubCount() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT count(*) FROM notes_fts WHERE length(content) < 100`).Scan(&count)
+	return count, err
 }

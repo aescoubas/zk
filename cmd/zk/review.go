@@ -88,12 +88,30 @@ func runReview() {
 
 	// 3. Start TUI
 	m := newReviewModel(st, notes, absRoot)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	wm := reviewWrapper{m}
+	p := tea.NewProgram(wm, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running review: %v\n", err)
 		os.Exit(1)
 	}
 }
+
+type reviewWrapper struct {
+	reviewModel
+}
+
+func (m reviewWrapper) Init() tea.Cmd { return m.reviewModel.Init() }
+
+func (m reviewWrapper) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(navigateToDashboardMsg); ok {
+		return m, tea.Quit
+	}
+	mod, cmd := m.reviewModel.Update(msg)
+	m.reviewModel = mod.(reviewModel)
+	return m, cmd
+}
+
+func (m reviewWrapper) View() string { return m.reviewModel.View() }
 
 type reviewModel struct {
 	store    *store.Store
@@ -158,7 +176,7 @@ func (m reviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			m.quitting = true
-			return m, tea.Quit
+			return m, func() tea.Msg { return navigateToDashboardMsg{} }
 		case "1", "2", "3", "4", "5":
 			// Rating
 			rating := srs.Rating(0)
@@ -175,7 +193,7 @@ func (m reviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.queue) == 0 {
 				m.current = nil
 				m.quitting = true
-				return m, tea.Quit
+				return m, func() tea.Msg { return navigateToDashboardMsg{} }
 			}
 			m.current = m.queue[0]
 			m.queue = m.queue[1:]

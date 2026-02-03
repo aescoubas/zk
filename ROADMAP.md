@@ -143,3 +143,8 @@ Refining the core exploration and listing capabilities for better usability.
         - Topic
         - Number of backlinks (incoming links)
         - Number of outgoing links
+
+### Phase 15: Graph Connectivity & Traversal
+Ensuring the Zettelkasten is a fully connected graph starting from a clear entry point.
+- [ ] **Root Node Implementation**: Ensure `zk explore` opens a dedicated "Index" or "Root" note that explicitly links to major entry points/topics, rather than an empty or disconnected view.
+- [ ] **Graph Integrity**: Achieve full connectivity where every note is reachable from the root (eliminate "islands" recursively).

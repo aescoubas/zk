@@ -66,6 +66,20 @@ type NoteSummary struct {
 	Title         string    `json:"title"`
 	ModTime       time.Time `json:"mod_time"`
 	Tags          []string  `json:"tags"`
-	Backlinks     int       `json:"backlinks"`
-	OutgoingLinks int       `json:"outgoing_links"`
+	// Backlinks is the number of incoming links.
+	Backlinks int `json:"backlinks"`
+	// OutgoingLinks is the number of outgoing links.
+	OutgoingLinks int `json:"outgoing_links"`
+}
+
+// TagCount represents a tag and its usage count.
+type TagCount struct {
+	Tag   string `json:"tag"`
+	Count int    `json:"count"`
+}
+
+// SimilarNote represents a note with a similarity score.
+type SimilarNote struct {
+	Note  *Note
+	Score float64
 }

@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -40,26 +43,10 @@ func runDashboard() {
 	}
 	defer st.Close()
 
-	// Fetch initial data
-	noteCount, linkCount, err := st.GetStats()
+	m, err := NewDashboardModel(st, absRoot)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting stats: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error initializing dashboard: %v\n", err)
 		os.Exit(1)
-	}
-
-	recents, err := st.GetRecentNotes(5)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting recent notes: %v\n", err)
-		os.Exit(1)
-	}
-
-	m := dashboardModel{
-		store:     st,
-		root:      absRoot,
-		noteCount: noteCount,
-		linkCount: linkCount,
-		recents:   recents,
-		cursor:    0,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -70,13 +57,70 @@ func runDashboard() {
 }
 
 type dashboardModel struct {
-	store     *store.Store
-	root      string
-	noteCount int
-	linkCount int
-	recents   []*model.Note
-	cursor    int // 0-4 for recents? Or just actions?
-	quitting  bool
+	store       *store.Store
+	root        string
+	noteCount   int
+	linkCount   int
+	orphanCount int
+	stubCount   int
+	recents     []*model.Note
+	topics      []model.TagCount
+	snippet     string
+	cursor      int
+	quitting    bool
+	width       int
+	height      int
+}
+
+func NewDashboardModel(st *store.Store, root string) (dashboardModel, error) {
+	noteCount, linkCount, err := st.GetStats()
+	if err != nil {
+		return dashboardModel{}, err
+	}
+
+	orphans, _ := st.GetOrphanCount()
+	stubs, _ := st.GetStubCount()
+
+	recents, err := st.GetRecentNotes(8)
+	if err != nil {
+		return dashboardModel{}, err
+	}
+
+	topics, _ := st.GetTopTags(8)
+	snippet := getRandomSnippet(root)
+
+	return dashboardModel{
+		store:       st,
+		root:        root,
+		noteCount:   noteCount,
+		linkCount:   linkCount,
+		orphanCount: orphans,
+		stubCount:   stubs,
+		recents:     recents,
+		topics:      topics,
+		snippet:     snippet,
+		cursor:      0,
+	}, nil
+}
+
+func getRandomSnippet(root string) string {
+	content, err := os.ReadFile(filepath.Join(root, "aphorisms.md"))
+	if err != nil {
+		return "Write something today!"
+	}
+	lines := strings.Split(string(content), "\n")
+	var valid []string
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if len(l) > 5 && !strings.HasPrefix(l, "#") && !strings.HasPrefix(l, "---") {
+			valid = append(valid, l)
+		}
+	}
+	if len(valid) == 0 {
+		return "No aphorisms found."
+	}
+	rand.Seed(time.Now().UnixNano())
+	return valid[rand.Intn(len(valid))]
 }
 
 func (m dashboardModel) Init() tea.Cmd {
@@ -99,34 +143,23 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 		case "enter":
-			// Open selected recent note
 			if len(m.recents) > 0 {
-				return m, openEditor(m.root, m.recents[m.cursor].Path)
+				note := m.recents[m.cursor]
+				return m, func() tea.Msg { return navigateToExploreMsg{note: note} }
 			}
 		case "r":
-			// Random
 			n, err := m.store.GetRandomNote()
 			if err == nil {
-				return m, openEditor(m.root, n.Path)
+				return m, func() tea.Msg { return navigateToExploreMsg{note: n} }
 			}
 		case "e":
-			// Explore - trigger explore command?
-			// For now, let's just exit and print a message, or better, we need a way to switch models.
-			// Swapping models in Bubbletea is possible but complex if not planned.
-			// Simpler: Execute the explore command as a subprocess? No, that's messy TUI in TUI.
-			// Best: We should restructure main to have a SessionModel that switches views.
-			// For this iteration, let's just print instructions or support basic actions.
-			m.quitting = true
-			return m, tea.ExecProcess(exec.Command("zk", "explore"), func(err error) tea.Msg {
-				return nil // Maybe refresh?
-			})
-		case "n":
-			// New Note
-			// We can use ExecProcess to run 'zk new' (interactive) or just open editor on new file
-			// But 'zk new' asks for title via args.
-			// We could implement a simple input for title here.
-			// Deferred for now.
+			return m, func() tea.Msg { return navigateToExploreMsg{note: nil} }
+		case "s":
+			return m, func() tea.Msg { return navigateToReviewMsg{} }
 		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 	}
 	return m, nil
 }
@@ -137,31 +170,70 @@ func (m dashboardModel) View() string {
 	}
 
 	// Styles
-	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true).MarginBottom(1)
-	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).MarginBottom(1)
-	itemStyle := lipgloss.NewStyle().PaddingLeft(2)
-	selectedStyle := lipgloss.NewStyle().PaddingLeft(0).Foreground(lipgloss.Color("170")).SetString("> ")
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).MarginTop(2)
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxYellowBright)).Bold(true).MarginBottom(1)
+	boxStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(GruvboxBlue)).Padding(0, 1)
+	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxAqua)).Bold(true).Underline(true)
+	itemStyle := lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color(GruvboxFg))
+	selectedStyle := lipgloss.NewStyle().PaddingLeft(0).Foreground(lipgloss.Color(GruvboxOrangeBright)).SetString("> ")
+	statLabel := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray))
+	statValue := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxPurpleBright)).Bold(true)
+	snippetStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGrayBright)).Italic(true).Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(lipgloss.Color(GruvboxGray))
 
-	// Build View
-	s := titleStyle.Render("Zettelkasten Dashboard") + "\n"
-	
-s += headerStyle.Render(fmt.Sprintf("Stats: %d Notes, %d Links", m.noteCount, m.linkCount)) + "\n\n"
-	
-s += headerStyle.Render("Recent Notes") + "\n"
-	
+	// Layout
+	// Title
+	title := titleStyle.Render("Zettelkasten Dashboard")
+
+	// Snippet
+	snippet := snippetStyle.Render(fmt.Sprintf("\"%s\"", m.snippet))
+
+	// Stats Column
+	statsContent := ""
+	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Notes:"), statValue.Render(fmt.Sprint(m.noteCount)))
+	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Links:"), statValue.Render(fmt.Sprint(m.linkCount)))
+	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Orphans:"), statValue.Render(fmt.Sprint(m.orphanCount)))
+	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Stubs:"), statValue.Render(fmt.Sprint(m.stubCount)))
+	statsBox := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("Stats"), statsContent))
+
+	// Topics Column
+	topicsContent := ""
+	for _, t := range m.topics {
+		topicsContent += fmt.Sprintf("%s (%d)\n", t.Tag, t.Count)
+	}
+	if len(m.topics) == 0 {
+		topicsContent = "No tags found"
+	}
+	topicsBox := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("Top Topics"), topicsContent))
+
+	// Recents Column
+	recentsContent := ""
 	for i, n := range m.recents {
-		line := fmt.Sprintf("%s (%s)", n.Title, n.ModTime.Format("2006-01-02"))
+		line := fmt.Sprintf("%s", n.Title)
+		if len(line) > 30 {
+			line = line[:27] + "..."
+		}
 		if i == m.cursor {
-			s += selectedStyle.Render(line) + "\n"
+			recentsContent += selectedStyle.Render(line) + "\n"
 		} else {
-			s += itemStyle.Render(line) + "\n"
+			recentsContent += itemStyle.Render(line) + "\n"
 		}
 	}
+	recentsBox := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("Recents"), recentsContent))
 
-	s += helpStyle.Render("Actions: [Enter] Open Note | [r] Random | [e] Explore | [q] Quit")
+	// Combine Columns
+	columns := lipgloss.JoinHorizontal(lipgloss.Top, statsBox, topicsBox, recentsBox)
 
-	return lipgloss.NewStyle().Margin(1, 2).Render(s)
+	// Help
+	help := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Render("Actions: [Enter] Explore | [r] Random | [e] Explore Index | [s] Review | [q] Quit")
+
+	// Full View
+	return lipgloss.JoinVertical(lipgloss.Left,
+		title,
+		snippet,
+		"\n",
+		columns,
+		"\n",
+		help,
+	)
 }
 
 func openEditor(root, path string) tea.Cmd {
