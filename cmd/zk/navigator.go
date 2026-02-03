@@ -20,6 +20,8 @@ type navigateToDashboardMsg struct{}
 
 type navigateToReviewMsg struct{}
 
+type navigateToSearchMsg struct{}
+
 var navCmd = &cobra.Command{
 	Use:   "nav",
 	Short: "Open the unified Zettelkasten Navigator",
@@ -38,6 +40,7 @@ const (
 	stateDashboard sessionState = iota
 	stateExplore
 	stateReview
+	stateSearch
 )
 
 type navigatorModel struct {
@@ -48,6 +51,7 @@ type navigatorModel struct {
 	dashboard dashboardModel
 	explore   exploreModel
 	review    reviewModel
+	search    searchModel
 	
 	width     int
 	height    int
@@ -116,6 +120,11 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == stateReview {
 			m.review, cmd = updateReview(m.review, msg)
 		}
+
+		// Search needs resize
+		if m.state == stateSearch {
+			m.search, cmd = updateSearch(m.search, msg)
+		}
 		
 		return m, cmd
 
@@ -123,6 +132,14 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateDashboard
 		return m, nil
 		
+	case navigateToSearchMsg:
+		m.state = stateSearch
+		// Always re-init search to refresh data? Or just once?
+		// Re-init allows picking up new files
+		m.search = newSearchModel(m.store, m.root)
+		m.search, _ = updateSearch(m.search, tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		return m, nil
+
 	case navigateToExploreMsg:
 		m.state = stateExplore
 		if msg.note != nil {
@@ -167,6 +184,8 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.explore, cmd = updateExplore(m.explore, msg)
 	case stateReview:
 		m.review, cmd = updateReview(m.review, msg)
+	case stateSearch:
+		m.search, cmd = updateSearch(m.search, msg)
 	}
 
 	return m, cmd
@@ -180,6 +199,8 @@ func (m navigatorModel) View() string {
 		return m.explore.View()
 	case stateReview:
 		return m.review.View()
+	case stateSearch:
+		return m.search.View()
 	}
 	return ""
 }
@@ -198,4 +219,9 @@ func updateExplore(m exploreModel, msg tea.Msg) (exploreModel, tea.Cmd) {
 func updateReview(m reviewModel, msg tea.Msg) (reviewModel, tea.Cmd) {
 	mod, cmd := m.Update(msg)
 	return mod.(reviewModel), cmd
+}
+
+func updateSearch(m searchModel, msg tea.Msg) (searchModel, tea.Cmd) {
+	mod, cmd := m.Update(msg)
+	return mod.(searchModel), cmd
 }

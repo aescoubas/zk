@@ -100,6 +100,8 @@ func NewDashboardModel(st *store.Store, root string) (dashboardModel, error) {
 		topics:      topics,
 		snippet:     snippet,
 		cursor:      0,
+		width:       80,
+		height:      24,
 	}, nil
 }
 
@@ -156,6 +158,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return navigateToExploreMsg{note: nil} }
 		case "s":
 			return m, func() tea.Msg { return navigateToReviewMsg{} }
+		case "l", "/":
+			return m, func() tea.Msg { return navigateToSearchMsg{} }
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -169,15 +173,44 @@ func (m dashboardModel) View() string {
 		return ""
 	}
 
+	// Calculate widths
+	// Overhead per box: 2 (border) + 2 (padding) = 4
+	// Total overhead for 3 columns: 12
+	// We subtract a bit more (14) for safety
+	totalOverhead := 14
+	colWidth := (m.width - totalOverhead) / 3
+	if colWidth < 20 {
+		colWidth = 20
+	}
+
 	// Styles
-	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxYellowBright)).Bold(true).MarginBottom(1)
-	boxStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(GruvboxBlue)).Padding(0, 1)
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(GruvboxYellowBright)).
+		Bold(true).
+		MarginBottom(1).
+		Width(m.width).
+		Align(lipgloss.Center)
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(GruvboxBlue)).
+		Padding(0, 1).
+		Width(colWidth).
+		Height(m.height - 10) // Slightly smaller to ensure fit
+
 	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxAqua)).Bold(true).Underline(true)
 	itemStyle := lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color(GruvboxFg))
 	selectedStyle := lipgloss.NewStyle().PaddingLeft(0).Foreground(lipgloss.Color(GruvboxOrangeBright)).SetString("> ")
 	statLabel := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray))
 	statValue := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxPurpleBright)).Bold(true)
-	snippetStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGrayBright)).Italic(true).Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(lipgloss.Color(GruvboxGray))
+	
+	snippetStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(GruvboxGrayBright)).
+		Italic(true).
+		Border(lipgloss.NormalBorder(), false, false, true, false).
+		BorderForeground(lipgloss.Color(GruvboxGray)).
+		Width(m.width - 4). // Slightly less than full width
+		Align(lipgloss.Center)
 
 	// Layout
 	// Title
@@ -208,8 +241,8 @@ func (m dashboardModel) View() string {
 	recentsContent := ""
 	for i, n := range m.recents {
 		line := fmt.Sprintf("%s", n.Title)
-		if len(line) > 30 {
-			line = line[:27] + "..."
+		if len(line) > colWidth-2 { // Truncate to fit column
+			line = line[:colWidth-5] + "..."
 		}
 		if i == m.cursor {
 			recentsContent += selectedStyle.Render(line) + "\n"
@@ -220,13 +253,15 @@ func (m dashboardModel) View() string {
 	recentsBox := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("Recents"), recentsContent))
 
 	// Combine Columns
-	columns := lipgloss.JoinHorizontal(lipgloss.Top, statsBox, topicsBox, recentsBox)
+	// Center the columns horizontally
+	columns := lipgloss.JoinHorizontal(lipgloss.Center, statsBox, topicsBox, recentsBox)
+	columns = lipgloss.PlaceHorizontal(m.width, lipgloss.Center, columns)
 
 	// Help
-	help := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Render("Actions: [Enter] Explore | [r] Random | [e] Explore Index | [s] Review | [q] Quit")
+	help := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Width(m.width).Align(lipgloss.Center).Render("Actions: [Enter] Explore | [l] Search | [r] Random | [s] Review | [q] Quit")
 
 	// Full View
-	return lipgloss.JoinVertical(lipgloss.Left,
+	content := lipgloss.JoinVertical(lipgloss.Center,
 		title,
 		snippet,
 		"\n",
@@ -234,6 +269,9 @@ func (m dashboardModel) View() string {
 		"\n",
 		help,
 	)
+	
+	// Ensure the entire block is centered in the terminal
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
 
 func openEditor(root, path string) tea.Cmd {

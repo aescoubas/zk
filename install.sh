@@ -2,8 +2,11 @@
 set -e
 
 # Default install prefix
-PREFIX="${1:-/usr/local}"
+PREFIX="${1:-/home/escoubas/.local}"
 BIN_DIR="$PREFIX/bin"
+
+# Ensure bin directory exists
+mkdir -p "$BIN_DIR"
 
 # ANSI colors
 GREEN='\033[0;32m'
@@ -16,6 +19,10 @@ if ! command -v go &> /dev/null; then
     echo "Error: 'go' is not installed or not in PATH."
     exit 1
 fi
+
+# Kill running instances
+echo "Stopping running 'zk' processes..."
+pkill -x zk || true
 
 # 1. Build
 echo "Building binary from source..."
@@ -64,10 +71,18 @@ install_completion() {
     fi
 }
 
-# Standard paths for completions (Linux/Unix)
+# User-level completion paths (if they exist)
+# Bash
 install_completion "bash" "$PREFIX/share/bash-completion/completions" "zk"
+install_completion "bash" "$HOME/.local/share/bash-completion/completions" "zk"
+
+# Zsh
 install_completion "zsh" "$PREFIX/share/zsh/site-functions" "_zk"
+install_completion "zsh" "$HOME/.zsh/completions" "_zk"
+
+# Fish
 install_completion "fish" "$PREFIX/share/fish/vendor_completions.d" "zk.fish"
+install_completion "fish" "$HOME/.config/fish/completions" "zk.fish"
 
 echo -e "${GREEN}Installation complete!${NC}"
 echo "Run 'zk help' to verify."

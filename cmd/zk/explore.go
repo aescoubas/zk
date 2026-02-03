@@ -225,6 +225,8 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, func() tea.Msg { return navigateToDashboardMsg{} }
+		case "/":
+			return m, func() tea.Msg { return navigateToSearchMsg{} }
 		case "tab":
 			m.focus = (m.focus + 1) % 4
 		case "shift+tab":

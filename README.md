@@ -38,11 +38,28 @@ This repository has been overhauled to support this atomic workflow with custom 
 
 ### 2. The `zk` CLI Tool
 
-The `bin/zk` script is your primary interface. Add it to your PATH or alias it.
+The `zk` tool is a high-performance Go application that manages your Zettelkasten.
 
+**Building from Source:**
+You need Go installed.
+```bash
+cd tools/zk-go
+go build -o ../../bin/zk ./cmd/zk
+```
+
+**Installation:**
+Use the provided script to build and install to your system (defaults to `~/.local/bin`):
+```bash
+./install.sh
+```
+The script also installs shell completions.
+
+**Usage:**
+The `zk` binary is your primary interface.
+- **Navigator**: Run `zk` (no args) to open the interactive dashboard.
 - **Create a new note**:
   ```bash
-  ./bin/zk new "My New Idea"
+  zk new "My New Idea"
   ```
   Creates a file `permanent_notes/YYYYMMDDHHMM-my-new-idea.md` and opens it.
 
