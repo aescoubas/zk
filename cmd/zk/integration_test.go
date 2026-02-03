@@ -43,8 +43,7 @@ func TestWorkflow(t *testing.T) {
 	}
 	defer os.RemoveAll(zkRoot)
 
-	// Create permanent_notes directory
-	if err := os.Mkdir(filepath.Join(zkRoot, "permanent_notes"), 0755); err != nil {
+	if err := os.Mkdir(filepath.Join(zkRoot, "zettels"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,9 +77,9 @@ func TestWorkflow(t *testing.T) {
 	}
 	
 	// Find the created file
-	files, _ := filepath.Glob(filepath.Join(zkRoot, "permanent_notes", "*.md"))
+	files, _ := filepath.Glob(filepath.Join(zkRoot, "zettels", "*.md"))
 	if len(files) != 1 {
-		t.Fatalf("Expected 1 note in permanent_notes, found %d", len(files))
+		t.Fatalf("Expected 1 note in zettels, found %d", len(files))
 	}
 	
 	// 4. Re-Index
@@ -108,7 +107,7 @@ func TestMCP(t *testing.T) {
 	defer os.RemoveAll(zkRoot)
 
 	// Create DB
-	if err := os.Mkdir(filepath.Join(zkRoot, "permanent_notes"), 0755); err != nil {
+	if err := os.Mkdir(filepath.Join(zkRoot, "zettels"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	_, err = runZK(t, zkRoot, "index")

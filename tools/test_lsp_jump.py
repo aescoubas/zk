@@ -54,7 +54,7 @@ def run_test():
         # 2. Open Document
     open_notif = make_notification("textDocument/didOpen", {
         "textDocument": {
-            "uri": "file:///home/escoubas/zettelkasten/permanent_notes/test_jump.md",
+            "uri": "file:///home/escoubas/zettelkasten/zettels/test_jump.md",
             "languageId": "markdown",
             "version": 1,
             "text": "See [[linux_programming_interface_book]] for details."
@@ -67,7 +67,7 @@ def run_test():
     # Cursor at "linux..." -> line 0, char 10 (start of word roughly)
     def_req = make_request(2, "textDocument/definition", {
         "textDocument": {
-            "uri": "file:///home/escoubas/zettelkasten/permanent_notes/test_jump.md"
+            "uri": "file:///home/escoubas/zettelkasten/zettels/test_jump.md"
         },
         "position": {
             "line": 0,
@@ -94,7 +94,7 @@ def run_test():
     # 4. Hover
     hover_req = make_request(3, "textDocument/hover", {
         "textDocument": {
-            "uri": "file:///home/escoubas/zettelkasten/permanent_notes/test_jump.md"
+            "uri": "file:///home/escoubas/zettelkasten/zettels/test_jump.md"
         },
         "position": {
             "line": 0,

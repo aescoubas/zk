@@ -288,11 +288,11 @@ func (s *Server) handleCallTool(params CallToolParams) (CallToolResult, *RPCErro
 		timestamp := time.Now().Format("200601021504")
 		filename := fmt.Sprintf("%s-%s.md", timestamp, slug)
 		
-		// Create in permanent_notes
-		relDir := "permanent_notes"
-		path := filepath.Join(s.rootDir, relDir, filename)
+		// Create in zettels
+		relDir := "zettels"
+		fullPath := filepath.Join(s.rootDir, relDir, filename)
 		// Ensure dir exists
-		os.MkdirAll(filepath.Dir(path), 0755)
+		os.MkdirAll(filepath.Dir(fullPath), 0755)
 		
 		tagsStr := ""
 		if len(args.Tags) > 0 {
@@ -304,7 +304,7 @@ func (s *Server) handleCallTool(params CallToolParams) (CallToolResult, *RPCErro
 		fileContent := fmt.Sprintf("---\ntitle: %s\ndate: %s\n%s\n---\n\n%s", 
 			args.Title, time.Now().Format("2006-01-02"), tagsStr, args.Content)
 			
-		if err := os.WriteFile(path, []byte(fileContent), 0644); err != nil {
+		if err := os.WriteFile(fullPath, []byte(fileContent), 0644); err != nil {
 			return CallToolResult{IsError: true, Content: []Content{{Type: "text", Text: err.Error()}}}, nil
 		}
 
@@ -320,7 +320,7 @@ func (s *Server) handleCallTool(params CallToolParams) (CallToolResult, *RPCErro
 			log.Printf("Failed to parse created note: %v", err)
 		}
 		
-		return CallToolResult{Content: []Content{{Type: "text", Text: "Created note: " + path}}}, nil
+		return CallToolResult{Content: []Content{{Type: "text", Text: "Created note: " + fullPath}}}, nil
 	}
 
 	return CallToolResult{IsError: true, Content: []Content{{Type: "text", Text: "Tool not found"}}}, nil

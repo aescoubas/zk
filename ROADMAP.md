@@ -2,7 +2,7 @@
 
 ### Phase 1: Structural Foundation
 Reorganizing the physical file structure to support atomic notes and low-friction linking.
-- [x] **Flatten Hierarchy**: Move all atomic notes from deep subdirectories (e.g., `permanent_notes/linux_it/`, `permanent_notes/german_learning/`) into a single flat `permanent_notes/` directory to discourage categorical silo-ing.
+- [x] **Flatten Hierarchy**: Move all atomic notes from deep subdirectories (e.g., `zettels/linux_it/`, `zettels/german_learning/`) into a single flat `zettels/` directory to discourage categorical silo-ing.
 - [x] **Archive Legacy**: Move `legacy_doc/` and `bibliographic_notes/` into an explicit `_archive/` or `references/` directory to separate "processed" thoughts from "raw" source material.
 - [ ] **Naming Convention Standardization**: Define and strictly enforce a filename convention (e.g., `YYYYMMDDHHMM-slug_title.md`) that sorts chronologically but reads semantically.
 

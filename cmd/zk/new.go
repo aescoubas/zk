@@ -37,8 +37,8 @@ func runNew(title string) {
 	timestamp := time.Now().Format("200601021504")
 	filename := fmt.Sprintf("%s-%s.md", timestamp, slug)
 	
-	// Create in permanent_notes by default, or root if permanent_notes doesn't exist
-	targetDir := filepath.Join(absRoot, "permanent_notes")
+	// Create in zettels by default, or root if zettels doesn't exist
+	targetDir := filepath.Join(absRoot, "zettels")
 	if _, err := os.Stat(targetDir); os.IsNotExist(err) {
 		targetDir = absRoot
 	}

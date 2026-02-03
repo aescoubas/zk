@@ -22,6 +22,63 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
+# ---------------------------------------------------------
+# Ollama Setup (Semantic Features)
+# ---------------------------------------------------------
+echo -e "${GREEN}Checking Semantic Search Dependencies (Ollama)...${NC}"
+
+if ! command -v ollama &> /dev/null; then
+    echo "Ollama not found. Installing..."
+    if curl -fsSL https://ollama.com/install.sh | sh; then
+        echo "Ollama installed successfully."
+    else
+        echo "Failed to install Ollama. Semantic features (zk ask/embed) will not work."
+        echo "Please install manually: curl -fsSL https://ollama.com/install.sh | sh"
+        # We don't exit here, just warn, so standard zk functions still work
+    fi
+else
+    echo "Ollama is already installed."
+fi
+
+if command -v ollama &> /dev/null; then
+    # Check if running
+    if ! curl -s localhost:11434 > /dev/null; then
+        echo "Ollama server is not running."
+        # Try systemd first
+        if command -v systemctl &> /dev/null; then
+            echo "Attempting to start via systemctl..."
+            sudo systemctl start ollama || true
+        fi
+        
+        # Check again
+        sleep 2
+        if ! curl -s localhost:11434 > /dev/null; then
+             echo "Starting Ollama in background..."
+             ollama serve &> /dev/null &
+             
+             # Wait loop
+             echo -n "Waiting for Ollama to initialize..."
+             for i in {1..10}; do
+                if curl -s localhost:11434 > /dev/null; then
+                    echo " Done."
+                    break
+                fi
+                echo -n "."
+                sleep 1
+             done
+        fi
+    fi
+
+    # Pull Model if server is up
+    if curl -s localhost:11434 > /dev/null; then
+        echo "Ensuring embedding model 'nomic-embed-text' is available..."
+        ollama pull nomic-embed-text
+    else
+        echo "Warning: Could not start Ollama. You may need to run 'ollama serve' manually."
+    fi
+fi
+# ---------------------------------------------------------
+
 # Kill running instances
 echo "Stopping running 'zk' processes..."
 pkill -x zk || true

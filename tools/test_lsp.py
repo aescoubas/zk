@@ -56,7 +56,7 @@ def run_test():
     # 2. Open Document
     open_notif = make_notification("textDocument/didOpen", {
         "textDocument": {
-            "uri": "file:///home/escoubas/zettelkasten/permanent_notes/test.md",
+            "uri": "file:///home/escoubas/zettelkasten/zettels/test.md",
             "languageId": "markdown",
             "version": 1,
             "text": "This is a test note.\nCheck [[lin"
@@ -69,7 +69,7 @@ def run_test():
     # Cursor at end of "[[lin" -> line 1 (0-indexed), char 13
     comp_req = make_request(2, "textDocument/completion", {
         "textDocument": {
-            "uri": "file:///home/escoubas/zettelkasten/permanent_notes/test.md"
+            "uri": "file:///home/escoubas/zettelkasten/zettels/test.md"
         },
         "position": {
             "line": 1,

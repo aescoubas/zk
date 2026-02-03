@@ -689,6 +689,50 @@ func (s *Store) FindSimilar(targetID string, limit int) ([]model.SimilarNote, er
 	return matches, nil
 }
 
+// SearchByVector finds notes semantically similar to the query vector.
+func (s *Store) SearchByVector(queryVector []float64, limit int) ([]model.SimilarNote, error) {
+	// 1. Get All Embeddings
+	allEmbs, err := s.GetAllEmbeddings()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load embeddings: %w", err)
+	}
+
+	// 2. Compute Similarity
+	var matches []model.SimilarNote
+	for _, e := range allEmbs {
+		score := llm.CosineSimilarity(queryVector, e.Vector)
+		
+		if score > 0.15 { // Lower threshold for search queries as they are short/imperfect
+			matches = append(matches, model.SimilarNote{
+				Note: &model.Note{ID: e.NoteID},
+				Score: score,
+			})
+		}
+	}
+
+	// 3. Sort
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].Score > matches[j].Score
+	})
+
+	// 4. Limit
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+
+	// 5. Fill Note Details
+	for i := range matches {
+		n, err := s.GetNote(matches[i].Note.ID)
+		if err == nil {
+			matches[i].Note = n
+		} else {
+			matches[i].Note.Title = matches[i].Note.ID // Fallback
+		}
+	}
+
+	return matches, nil
+}
+
 // GetTopTags returns the most frequent tags.
 func (s *Store) GetTopTags(limit int) ([]model.TagCount, error) {
 	rows, err := s.db.Query(`SELECT tag, count(*) as c FROM tags GROUP BY tag ORDER BY c DESC LIMIT ?`, limit)

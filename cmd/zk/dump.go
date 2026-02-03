@@ -14,7 +14,7 @@ import (
 var dumpCmd = &cobra.Command{
 	Use:   "dump [text...]",
 	Short: "Quickly dump a thought",
-	Long:  `Creates a new timestamped note in permanent_notes/. If text is provided, it is saved directly. Otherwise, opens the default editor.`, 
+	Long:  `Creates a new timestamped note in zettels/. If text is provided, it is saved directly. Otherwise, opens the default editor.`, 
 	Run: func(cmd *cobra.Command, args []string) {
 		runDump(args)
 	},
@@ -31,11 +31,11 @@ func runDump(args []string) {
 		os.Exit(1)
 	}
 
-	// Dump directly to permanent_notes
+	// Dump directly to zettels
 	// The concept is: Everything is a note. Structure comes from linking.
-	targetDir := filepath.Join(absRoot, "permanent_notes")
+	targetDir := filepath.Join(absRoot, "zettels")
 	if _, err := os.Stat(targetDir); os.IsNotExist(err) {
-		// Fallback to root if permanent_notes doesn't exist
+		// Fallback to root if zettels doesn't exist
 		targetDir = absRoot
 	}
 

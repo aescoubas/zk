@@ -18,7 +18,7 @@
 
 ### Workflow
 1.  **Read/Consume**: Note passages or thoughts in `references/` or temporary notes.
-2.  **Synthesize**: Write **permanent atomic notes** (`permanent_notes/`) and link them to the source and other concepts.
+2.  **Synthesize**: Write **permanent atomic notes** (`zettels/`) and link them to the source and other concepts.
 3.  **Refine**: Periodically check for "orphan" notes and connect them.
 
 ---
@@ -29,7 +29,7 @@ This repository has been overhauled to support this atomic workflow with custom 
 
 ### 1. Directory Structure
 
-- **`permanent_notes/`**: All active atomic notes live here (flat structure).
+- **`zettels/`**: All active atomic notes live here (flat structure).
 - **`archive/`**: Legacy wikis and documents (`legacy_doc/`).
 - **`references/`**: Source materials (`bibliographic_notes/`).
 - **`bin/`**: Custom CLI tools (`zk`, `lint`, `sync`, `build_graph.py`).
@@ -58,10 +58,9 @@ The script also installs shell completions.
 The `zk` binary is your primary interface.
 - **Navigator**: Run `zk` (no args) to open the interactive dashboard.
 - **Create a new note**:
-  ```bash
-  zk new "My New Idea"
-  ```
-  Creates a file `permanent_notes/YYYYMMDDHHMM-my-new-idea.md` and opens it.
+`zk dump`
+-------------
+Creates a file `zettels/YYYYMMDDHHMM-my-new-idea.md` and opens it.
 
 - **Search and Link**:
   ```bash
