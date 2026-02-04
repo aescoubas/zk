@@ -10,7 +10,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/escoubas/zk/internal/llm"
 	"github.com/escoubas/zk/internal/model"
 	"github.com/escoubas/zk/internal/store"
 	"github.com/spf13/cobra"
@@ -38,6 +40,7 @@ type dashboardModel struct {
 	orphanCount int
 	stubCount   int
 	allNotes    []*model.Note
+	searchResults []model.SimilarNote
 	topics      []model.TagCount
 	snippet     string
 	cursor      int
@@ -45,6 +48,29 @@ type dashboardModel struct {
 	quitting    bool
 	width       int
 	height      int
+	
+	// Semantic Search
+	searchParams textinput.Model
+	// FTS Search
+	ftsParams    textinput.Model
+	// Create Note Input
+	createInput  textinput.Model
+	
+	// Navigation State
+	activeColumn int // 0: Stats, 1: Middle, 2: Right
+	middleFocus  int // 0: Semantic Input, 1: FTS Input
+	mode         int // 0: Normal, 1: Insert, 2: DeleteConfirm, 3: CreateNote
+	
+	pendingDelete *model.Note // Note to be deleted
+
+	// Search State
+	lastSearchType  int    // focusSemantic or focusFTS
+	lastSearchQuery string 
+
+	isSearching  bool // Are we currently typing in the search bar? (Deprecated/Managed by mode)
+	isResults    bool // Are we displaying search results instead of all notes?
+	showHelp     bool // Show help overlay
+	llmClient    *llm.Client
 }
 
 func NewDashboardModel(st *store.Store, root string) (dashboardModel, error) {
@@ -64,20 +90,48 @@ func NewDashboardModel(st *store.Store, root string) (dashboardModel, error) {
 	topics, _ := st.GetTopTags(8)
 	snippet := getRandomSnippet(root)
 
+	// Init Semantic Input
+	ti := textinput.New()
+	ti.Placeholder = "Ask your Zettelkasten..."
+	ti.CharLimit = 156
+	ti.Width = 30
+	ti.Prompt = "AI: "
+
+	// Init FTS Input
+	fts := textinput.New()
+	fts.Placeholder = "Search keywords..."
+	fts.CharLimit = 156
+	fts.Width = 30
+	fts.Prompt = "/: "
+
+	// Init Create Input
+	ci := textinput.New()
+	ci.Placeholder = "Note Title"
+	ci.CharLimit = 100
+	ci.Width = 30
+	ci.Prompt = "New: "
+
 	return dashboardModel{
-		store:       st,
-		root:        root,
-		noteCount:   noteCount,
-		linkCount:   linkCount,
-		orphanCount: orphans,
-		stubCount:   stubs,
-		allNotes:    allNotes,
-		topics:      topics,
-		snippet:     snippet,
-		cursor:      0,
-		offset:      0,
-		width:       80,
-		height:      24,
+		store:        st,
+		root:         root,
+		noteCount:    noteCount,
+		linkCount:    linkCount,
+		orphanCount:  orphans,
+		stubCount:    stubs,
+		allNotes:     allNotes,
+		topics:       topics,
+		snippet:      snippet,
+		cursor:       0,
+		offset:       0,
+		width:        80,
+		height:       24,
+		searchParams: ti,
+		ftsParams:    fts,
+		createInput:  ci,
+		activeColumn: 2, // Default to Notes list (Right)
+		middleFocus:  0, // Default to Semantic Input
+		mode:         0, // Normal mode
+		llmClient:    llm.NewClient("http://localhost:11434", "nomic-embed-text"),
 	}, nil
 }
 
@@ -101,53 +155,331 @@ func getRandomSnippet(root string) string {
 	return valid[rand.Intn(len(valid))]
 }
 
+type searchResultMsg []model.SimilarNote
+
+func performSemanticSearch(client *llm.Client, store *store.Store, query string) tea.Cmd {
+	return func() tea.Msg {
+		vec, err := client.Embed(query)
+		if err != nil {
+			return searchResultMsg(nil)
+		}
+		results, err := store.SearchByVector(vec, 20)
+		if err != nil {
+			return searchResultMsg(nil)
+		}
+		return searchResultMsg(results)
+	}
+}
+
+func performFullTextSearch(store *store.Store, query string) tea.Cmd {
+	return func() tea.Msg {
+		notes, err := store.SearchNotes(query)
+		if err != nil {
+			return searchResultMsg(nil)
+		}
+		// Convert to SimilarNote for compatibility
+		results := make([]model.SimilarNote, len(notes))
+		for i, n := range notes {
+			results[i] = model.SimilarNote{
+				Note: n,
+				Score: 1.0, // Mock score for exact matches
+			}
+		}
+		return searchResultMsg(results)
+	}
+}
+
+const (
+	modeNormal = 0
+	modeInsert = 1
+	modeDeleteConfirm = 2
+	modeCreateNote = 3
+	
+	colStats  = 0
+	colMiddle = 1
+	colRight  = 2
+	
+	focusSemantic = 0
+	focusFTS      = 1
+)
+
 func (m dashboardModel) Init() tea.Cmd {
 	return nil
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Delete Confirm Mode Logic
+		if m.mode == modeDeleteConfirm {
+			switch msg.String() {
+			case "y", "Y":
+				if m.pendingDelete != nil {
+					// Physical delete
+					fullPath := filepath.Join(m.root, m.pendingDelete.Path)
+					if err := os.Remove(fullPath); err != nil {
+						// TODO: Show error message?
+					}
+					// Index delete
+					if err := m.store.DeleteNote(m.pendingDelete.ID); err == nil {
+						// Refresh list
+						notes, _ := m.store.ListNotes()
+						m.allNotes = notes
+						
+						// Refresh stats
+						nc, lc, _ := m.store.GetStats()
+						m.noteCount = nc
+						m.linkCount = lc
+						
+						// If we were in search results, re-run the search
+						if m.isResults {
+							m.mode = modeNormal
+							m.pendingDelete = nil
+							
+							// Adjust cursor to avoid OOB if possible (heuristic)
+							if m.cursor > 0 {
+								m.cursor--
+							}
+							
+							if m.lastSearchType == focusSemantic {
+								return m, performSemanticSearch(m.llmClient, m.store, m.lastSearchQuery)
+							} else {
+								return m, performFullTextSearch(m.store, m.lastSearchQuery)
+							}
+						}
+
+						// Reset search state to avoid stale results (only if NOT in results mode, which is handled above)
+						// Actually if we were NOT in results mode, we just stay in all notes.
+						// But if we were, we re-ran search.
+						
+						// Adjust cursor for All Notes view
+						if m.cursor >= len(m.allNotes) && m.cursor > 0 {
+							m.cursor--
+						}
+					}
+				}
+				m.mode = modeNormal
+				m.pendingDelete = nil
+				return m, nil
+			case "n", "N", "esc":
+				m.mode = modeNormal
+				m.pendingDelete = nil
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Create Note Mode Logic
+		if m.mode == modeCreateNote {
+			switch msg.String() {
+			case "enter":
+				title := m.createInput.Value()
+				if title != "" {
+					path, err := createNoteFile(title)
+					if err == nil {
+						m.mode = modeNormal
+						m.createInput.SetValue("")
+						relPath, _ := filepath.Rel(m.root, path)
+						// Refresh list (optional, but good)
+						// notes, _ := m.store.ListNotes()
+						// m.allNotes = notes
+						return m, openEditor(m.root, relPath)
+					}
+				}
+				m.mode = modeNormal
+				m.createInput.Blur()
+				return m, nil
+			case "esc":
+				m.mode = modeNormal
+				m.createInput.Blur()
+				return m, nil
+			}
+			m.createInput, cmd = m.createInput.Update(msg)
+			return m, cmd
+		}
+
+		// Insert Mode Logic
+		if m.mode == modeInsert {
+			switch msg.String() {
+			case "enter":
+				m.mode = modeNormal
+				m.isResults = true
+				var query string
+				if m.middleFocus == focusSemantic {
+					query = m.searchParams.Value()
+					m.lastSearchType = focusSemantic
+					m.lastSearchQuery = query
+					m.searchParams.Blur()
+					return m, performSemanticSearch(m.llmClient, m.store, query)
+				} else {
+					query = m.ftsParams.Value()
+					m.lastSearchType = focusFTS
+					m.lastSearchQuery = query
+					m.ftsParams.Blur()
+					return m, performFullTextSearch(m.store, query)
+				}
+			case "esc":
+				m.mode = modeNormal
+				m.searchParams.Blur()
+				m.ftsParams.Blur()
+				return m, nil
+			}
+			
+			if m.middleFocus == focusSemantic {
+				m.searchParams, cmd = m.searchParams.Update(msg)
+			} else {
+				m.ftsParams, cmd = m.ftsParams.Update(msg)
+			}
+			return m, cmd
+		}
+
+		// Normal Mode Logic
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-				if m.cursor < m.offset {
-					m.offset = m.cursor
+		
+		case "?":
+			m.showHelp = !m.showHelp
+			return m, nil
+		
+		case "n":
+			m.mode = modeCreateNote
+			m.createInput.Focus()
+			return m, textinput.Blink
+
+		// Column Navigation
+		case "h", "left":
+			if m.activeColumn > colStats {
+				m.activeColumn--
+			}
+		case "l", "right":
+			if m.activeColumn < colRight {
+				m.activeColumn++
+			}
+			
+		// Vertical Navigation within Columns
+		case "j", "down":
+			if m.activeColumn == colMiddle {
+				if m.middleFocus < focusFTS {
+					m.middleFocus++
+				}
+			} else if m.activeColumn == colRight {
+				// Navigate List
+				listLen := len(m.allNotes)
+				if m.isResults {
+					listLen = len(m.searchResults)
+				}
+				
+				if m.cursor < listLen-1 {
+					m.cursor++
+					listHeight := m.height - 14
+					if listHeight < 1 { listHeight = 1 }
+					if m.cursor >= m.offset+listHeight {
+						m.offset++
+					}
 				}
 			}
-		case "down", "j":
-			if m.cursor < len(m.allNotes)-1 {
-				m.cursor++
-				// Estimate list height (height - title - stats - help - borders ~ 14 lines)
-				listHeight := m.height - 14
-				if listHeight < 1 {
-					listHeight = 1
+		case "k", "up":
+			if m.activeColumn == colMiddle {
+				if m.middleFocus > focusSemantic {
+					m.middleFocus--
 				}
-				if m.cursor >= m.offset+listHeight {
-					m.offset++
+			} else if m.activeColumn == colRight {
+				// Navigate List
+				if m.cursor > 0 {
+					m.cursor--
+					if m.cursor < m.offset {
+						m.offset = m.cursor
+					}
 				}
 			}
-		case "enter":
-			if len(m.allNotes) > 0 {
-				note := m.allNotes[m.cursor]
-				return m, func() tea.Msg { return navigateToExploreMsg{note: note} }
+
+		// Enter Insert Mode
+		case "i", "enter":
+			if m.activeColumn == colMiddle {
+				m.mode = modeInsert
+				if m.middleFocus == focusSemantic {
+					m.searchParams.Focus()
+				} else {
+					m.ftsParams.Focus()
+				}
+				return m, textinput.Blink
+			} else if m.activeColumn == colRight {
+				// Open Note
+				if m.isResults {
+					if len(m.searchResults) > 0 {
+						note := m.searchResults[m.cursor].Note
+						return m, func() tea.Msg { return navigateToExploreMsg{note: note} }
+					}
+				} else {
+					if len(m.allNotes) > 0 {
+						note := m.allNotes[m.cursor]
+						return m, func() tea.Msg { return navigateToExploreMsg{note: note} }
+					}
+				}
 			}
+
+		case "esc":
+			if m.isResults {
+				m.isResults = false
+				m.searchParams.SetValue("")
+				m.ftsParams.SetValue("")
+				m.offset = 0
+				m.cursor = 0
+			}
+		
+		// Delete Note
+		case "d", "delete":
+			if m.activeColumn == colRight {
+				if m.isResults {
+					if len(m.searchResults) > 0 {
+						m.pendingDelete = m.searchResults[m.cursor].Note
+						m.mode = modeDeleteConfirm
+					}
+				} else {
+					if len(m.allNotes) > 0 {
+						m.pendingDelete = m.allNotes[m.cursor]
+						m.mode = modeDeleteConfirm
+					}
+				}
+			}
+
+		// Legacy shortcuts (still useful?)
 		case "r":
 			n, err := m.store.GetRandomNote()
 			if err == nil {
 				return m, func() tea.Msg { return navigateToExploreMsg{note: n} }
 			}
 		case "e":
-			return m, func() tea.Msg { return navigateToExploreMsg{note: nil} }
+			if m.activeColumn == colRight {
+				var note *model.Note
+				if m.isResults {
+					if len(m.searchResults) > 0 {
+						note = m.searchResults[m.cursor].Note
+					}
+				} else {
+					if len(m.allNotes) > 0 {
+						note = m.allNotes[m.cursor]
+					}
+				}
+				
+				if note != nil {
+					return m, openEditor(m.root, note.Path)
+				}
+			}
 		case "s":
 			return m, func() tea.Msg { return navigateToReviewMsg{} }
-		case "l", "/":
-			return m, func() tea.Msg { return navigateToSearchMsg{} }
 		}
+	case searchResultMsg:
+		m.searchResults = msg
+		m.isResults = true
+		m.activeColumn = colRight // Auto switch to results
+		m.cursor = 0
+		m.offset = 0
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -161,9 +493,6 @@ func (m dashboardModel) View() string {
 	}
 
 	// Calculate widths
-	// Overhead per box: 2 (border) + 2 (padding) = 4
-	// Total overhead for 3 columns: 12
-	// We subtract a bit more (14) for safety
 	totalOverhead := 14
 	colWidth := (m.width - totalOverhead) / 3
 	if colWidth < 20 {
@@ -171,19 +500,33 @@ func (m dashboardModel) View() string {
 	}
 
 	// Styles
+	baseBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(0, 1).
+		Width(colWidth).
+		Height(m.height - 10)
+
+	activeBorderColor := lipgloss.Color(GruvboxOrangeBright)
+	inactiveBorderColor := lipgloss.Color(GruvboxBlue)
+
+	statsBoxStyle := baseBoxStyle.Copy().BorderForeground(inactiveBorderColor)
+	middleBoxStyle := baseBoxStyle.Copy().BorderForeground(inactiveBorderColor)
+	notesBoxStyle := baseBoxStyle.Copy().BorderForeground(inactiveBorderColor)
+
+	if m.activeColumn == colStats {
+		statsBoxStyle = statsBoxStyle.BorderForeground(activeBorderColor)
+	} else if m.activeColumn == colMiddle {
+		middleBoxStyle = middleBoxStyle.BorderForeground(activeBorderColor)
+	} else if m.activeColumn == colRight {
+		notesBoxStyle = notesBoxStyle.BorderForeground(activeBorderColor)
+	}
+
 	titleStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(GruvboxYellowBright)).
 		Bold(true).
 		MarginBottom(1).
 		Width(m.width).
 		Align(lipgloss.Center)
-
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(GruvboxBlue)).
-		Padding(0, 1).
-		Width(colWidth).
-		Height(m.height - 10) // Slightly smaller to ensure fit
 
 	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxAqua)).Bold(true).Underline(true)
 	itemStyle := lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color(GruvboxFg))
@@ -196,14 +539,11 @@ func (m dashboardModel) View() string {
 		Italic(true).
 		Border(lipgloss.NormalBorder(), false, false, true, false).
 		BorderForeground(lipgloss.Color(GruvboxGray)).
-		Width(m.width - 4). // Slightly less than full width
+		Width(m.width - 4).
 		Align(lipgloss.Center)
 
 	// Layout
-	// Title
 	title := titleStyle.Render("Zettelkasten Dashboard")
-
-	// Snippet
 	snippet := snippetStyle.Render(fmt.Sprintf("\"%s\"", m.snippet))
 
 	// Stats Column
@@ -212,7 +552,7 @@ func (m dashboardModel) View() string {
 	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Links:"), statValue.Render(fmt.Sprint(m.linkCount)))
 	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Orphans:"), statValue.Render(fmt.Sprint(m.orphanCount)))
 	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Stubs:"), statValue.Render(fmt.Sprint(m.stubCount)))
-	statsBox := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("Stats"), statsContent))
+	statsBox := statsBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("Stats"), statsContent))
 
 	// Topics Column
 	topicsContent := ""
@@ -222,22 +562,79 @@ func (m dashboardModel) View() string {
 	if len(m.topics) == 0 {
 		topicsContent = "No tags found"
 	}
-	topicsBox := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("Top Topics"), topicsContent))
+	
+	// Input Styles
+	activeInputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxOrangeBright))
+	inactiveInputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray))
+	
+	semanticHeader := "Semantic Search"
+	ftsHeader := "Full Text Search"
+	
+	if m.activeColumn == colMiddle {
+		if m.middleFocus == focusSemantic {
+			semanticHeader = activeInputStyle.Render("> " + semanticHeader)
+			ftsHeader = inactiveInputStyle.Render("  " + ftsHeader)
+		} else {
+			semanticHeader = inactiveInputStyle.Render("  " + semanticHeader)
+			ftsHeader = activeInputStyle.Render("> " + ftsHeader)
+		}
+	} else {
+		semanticHeader = inactiveInputStyle.Render("  " + semanticHeader)
+		ftsHeader = inactiveInputStyle.Render("  " + ftsHeader)
+	}
 
-	// All Notes Column
+	searchBar := m.searchParams.View()
+	ftsBar := m.ftsParams.View()
+	
+	topicsBox := middleBoxStyle.Render(
+		lipgloss.JoinVertical(lipgloss.Left, 
+			headerStyle.Render("Top Topics"), 
+			topicsContent,
+			"\n",
+			semanticHeader,
+			searchBar,
+			"\n",
+			ftsHeader,
+			ftsBar,
+		),
+	)
+
+	// All Notes / Results Column
 	allNotesContent := ""
 	listHeight := m.height - 14
 	if listHeight < 1 {
 		listHeight = 1
 	}
+	
+	listLen := 0
+	headerTitle := "All Notes"
+	if m.isResults {
+		listLen = len(m.searchResults)
+		headerTitle = fmt.Sprintf("Results (%d)", listLen)
+	} else {
+		listLen = len(m.allNotes)
+	}
+
 	start := m.offset
 	end := m.offset + listHeight
-	if end > len(m.allNotes) {
-		end = len(m.allNotes)
+	if end > listLen {
+		end = listLen
 	}
 
 	for i := start; i < end; i++ {
-		n := m.allNotes[i]
+		var title, summary string
+		if m.isResults {
+			n := m.searchResults[i].Note
+			title = n.Title
+			// Use TrimSpace first to remove trailing/leading newlines, then ReplaceAll for internal ones
+			cleanSummary := strings.ReplaceAll(strings.TrimSpace(n.Summary), "\n", " ")
+			summary = fmt.Sprintf("[%.2f] %s", m.searchResults[i].Score, cleanSummary)
+		} else {
+			n := m.allNotes[i]
+			title = n.Title
+			cleanSummary := strings.ReplaceAll(strings.TrimSpace(n.Summary), "\n", " ")
+			summary = cleanSummary
+		}
 		
 		// Build line with Title and Summary
 		avail := colWidth - 4 // Padding/Border safety
@@ -245,13 +642,8 @@ func (m dashboardModel) View() string {
 			avail = 10
 		}
 		
-		title := n.Title
-		summary := strings.ReplaceAll(n.Summary, "\n", " ") // Ensure single line
-		
 		line := title
 		if len(title) < avail && summary != "" {
-			// Determine space for summary
-			// separator " · " (3 chars)
 			rem := avail - len(title) - 3
 			if rem > 5 {
 				if len(summary) > rem {
@@ -265,21 +657,40 @@ func (m dashboardModel) View() string {
 			line = line[:avail-1] + "…"
 		}
 
-		if i == m.cursor {
+		if m.activeColumn == colRight && i == m.cursor {
 			allNotesContent += selectedStyle.Render(line) + "\n"
 		} else {
 			allNotesContent += itemStyle.Render(line) + "\n"
 		}
 	}
-	recentsBox := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("All Notes"), allNotesContent))
+	recentsBox := notesBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render(headerTitle), allNotesContent))
 
 	// Combine Columns
-	// Center the columns horizontally
 	columns := lipgloss.JoinHorizontal(lipgloss.Center, statsBox, topicsBox, recentsBox)
 	columns = lipgloss.PlaceHorizontal(m.width, lipgloss.Center, columns)
 
+	// Mode Status
+	modeStr := "NORMAL"
+	modeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGreenBright)).Bold(true)
+	if m.mode == modeInsert {
+		modeStr = "INSERT"
+		modeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxRedBright)).Bold(true)
+	} else if m.mode == modeDeleteConfirm {
+		modeStr = "CONFIRM DELETE"
+		modeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxRedBright)).Bold(true).Blink(true)
+	} else if m.mode == modeCreateNote {
+		modeStr = "CREATE NOTE"
+		modeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxBlueBright)).Bold(true)
+	}
+
 	// Help
-	help := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Width(m.width).Align(lipgloss.Center).Render("Actions: [Enter] Explore | [l] Search | [r] Random | [s] Review | [q] Quit")
+	helpText := fmt.Sprintf("[%s] h/l: Nav Cols | j/k: Nav Items | i: Insert | Enter: Open/Search | ?: Help", modeStyle.Render(modeStr))
+	if m.mode == modeDeleteConfirm {
+		helpText = fmt.Sprintf("[%s] Are you sure you want to delete '%s'? (y/n)", modeStyle.Render(modeStr), m.pendingDelete.Title)
+	} else if m.mode == modeCreateNote {
+		helpText = fmt.Sprintf("[%s] %s", modeStyle.Render(modeStr), m.createInput.View())
+	}
+	help := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Width(m.width).Align(lipgloss.Center).Render(helpText)
 
 	// Full View
 	content := lipgloss.JoinVertical(lipgloss.Center,
@@ -291,7 +702,35 @@ func (m dashboardModel) View() string {
 		help,
 	)
 	
-	// Ensure the entire block is centered in the terminal
+	if m.showHelp {
+		helpBoxStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(GruvboxYellow)).
+			Padding(1, 2).
+			Width(60)
+		
+		helpContent := `
+      Available Commands
+
+      Navigation
+        h/l, Left/Right   Navigate Columns
+        j/k, Down/Up      Navigate Items
+        Tab               Cycle Focus
+      
+      Actions
+        i, Enter          Insert Mode / Open Note
+        e                 Edit Selected Note
+        d                 Delete Selected Note
+        n                 New Note
+        s                 Review Mode (SRS)
+        r                 Random Note
+        ?                 Toggle Help
+        q, Ctrl+C         Quit
+		`
+		box := helpBoxStyle.Render(helpContent)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	}
+
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
 

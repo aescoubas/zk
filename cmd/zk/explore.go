@@ -282,7 +282,7 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadData()
 				}
 			}
-		case "o":
+		case "e":
 			return m, openEditor(m.root, m.current.Path)
 		}
 
@@ -310,14 +310,33 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			centerWidth = 20
 		}
 		
-		listHeight := msg.Height - 4
+		// Calculate consistent box height
+		// Screen Height - 5 lines (Footer + Spacing + Margins)
+		boxHeight := msg.Height - 5
+		if boxHeight < 10 {
+			boxHeight = 10
+		}
+
+		// Lists need to fit inside the box with borders (2 lines)
+		listHeight := boxHeight - 2
 		
 		m.listIn.SetSize(colWidth, listHeight)
 		m.listOut.SetSize(colWidth, listHeight)
 		m.listSimilar.SetSize(colWidth, listHeight)
 		
+		// Viewport needs to fit inside center box:
+		// Box Height
+		// - 2 lines border
+		// - 1 line header
+		// - 2 lines spacing (\n\n)
+		// = Box Height - 5
+		vpHeight := boxHeight - 5
+		if vpHeight < 1 {
+			vpHeight = 1
+		}
+
 		m.viewport.Width = centerWidth
-		m.viewport.Height = listHeight
+		m.viewport.Height = vpHeight
 		
 		// Update renderer width with Gruvbox style
 		m.renderer, _ = glamour.NewTermRenderer(
@@ -341,9 +360,22 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m exploreModel) View() string {
+	// Calculate consistent box height
+	boxHeight := m.height - 5
+	if boxHeight < 10 {
+		boxHeight = 10
+	}
+
 	// Styles using Gruvbox Colors
-	activeBorder := lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(GruvboxOrangeBright))
-	inactiveBorder := lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(GruvboxGray))
+	activeBorder := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(GruvboxOrangeBright)).
+		Height(boxHeight)
+
+	inactiveBorder := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(GruvboxGray)).
+		Height(boxHeight)
 	
 	var inStyle, outStyle, simStyle, centerStyle lipgloss.Style
 	
@@ -382,5 +414,11 @@ func (m exploreModel) View() string {
 	centerView := centerStyle.Render(fmt.Sprintf("%s\n\n%s", centerHeader, centerContent))
 	
 	content := lipgloss.JoinHorizontal(lipgloss.Top, inView, centerView, outView, simView)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+	
+	// Help Footer
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Width(m.width).Align(lipgloss.Center)
+	helpText := "Actions: [Tab] Cycle Focus | [h/l] Nav Cols | [Enter] Select | [e] Edit | [a] Append Link | [Back] History | [q] Dashboard"
+	footer := helpStyle.Render(helpText)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, lipgloss.JoinVertical(lipgloss.Center, content, "\n", footer))
 }

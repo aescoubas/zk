@@ -27,10 +27,33 @@ func init() {
 }
 
 func runNew(title string) {
+	path, err := createNoteFile(title)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating note: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(path)
+
+	// Open in EDITOR
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vim"
+	}
+	
+	cmd := exec.Command(editor, path)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening editor: %v\n", err)
+	}
+}
+
+func createNoteFile(title string) (string, error) {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving root: %v\n", err)
-		os.Exit(1)
+		return "", fmt.Errorf("error resolving root: %v", err)
 	}
 
 	slug := slugify(title)
@@ -51,28 +74,20 @@ date: %s
 tags: []
 ---
 
-`, title, time.Now().Format("2006-01-02"))
+# %s
+
+Summary...
+
+## Context / Details
+
+## References
+`, title, time.Now().Format("2006-01-02"), title)
 
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create note: %v\n", err)
-		os.Exit(1)
+		return "", fmt.Errorf("failed to create note: %v", err)
 	}
 
-	fmt.Println(path)
-
-	// Open in EDITOR
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vim"
-	}
-	
-	cmd := exec.Command(editor, path)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening editor: %v\n", err)
-	}
+	return path, nil
 }
 
 func slugify(s string) string {

@@ -636,6 +636,9 @@ func (s *Store) FindSimilar(targetID string, limit int) ([]model.SimilarNote, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to get target embedding: %w", err)
 	}
+    if targetEmb == nil {
+        return nil, nil // No embedding, no similar notes
+    }
 
 	// 2. Get All Embeddings
 	// Optimization: In a real DB, we'd use a vector index (sqlite-vss). 

@@ -243,13 +243,14 @@ func (m reviewModel) View() string {
 		return "No more notes to review.\n"
 	}
 
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Width(m.width).Align(lipgloss.Center)
 
 	content := fmt.Sprintf(
-		"\n%s\n\n%s\n",
+		"\n%s\n\n",
 		m.viewport.View(),
-		helpStyle("Rate recall: 1 (Fail) - 5 (Perfect) | q: Quit | Arrows/jk: Scroll"),
 	)
 	
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+	footer := helpStyle.Render("Actions: [1-5] Rate Recall (Fail-Perfect) | [q] Dashboard | [j/k] Scroll Content")
+	
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content + footer)
 }

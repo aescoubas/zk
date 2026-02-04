@@ -101,6 +101,25 @@ func runIndex(dir string, watch bool) {
 	duration := time.Since(start)
 	fmt.Printf("\nDone. Indexed %d notes in %v.\n", count, duration)
 
+	// Prune Stale Notes
+	fmt.Println("Pruning stale notes...")
+	allNotes, _ := st.ListNotes()
+	pruned := 0
+	for _, n := range allNotes {
+		fullPath := filepath.Join(absRoot, n.Path)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			if err := st.DeleteNote(n.ID); err == nil {
+				fmt.Printf("Deleted stale note: %s\n", n.ID)
+				pruned++
+			}
+		} else if err != nil {
+            fmt.Printf("Error checking %s: %v\n", fullPath, err)
+        }
+	}
+	if pruned > 0 {
+		fmt.Printf("Pruned %d stale notes.\n", pruned)
+	}
+
 	if watch {
 		fmt.Println("Watching for changes...")
 		w, err := watcher.NewWatcher(absRoot, func(path string) {

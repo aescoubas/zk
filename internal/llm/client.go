@@ -24,8 +24,9 @@ func NewClient(baseURL, model string) *Client {
 }
 
 type EmbeddingRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
+	Model   string                 `json:"model"`
+	Prompt  string                 `json:"prompt"`
+	Options map[string]interface{} `json:"options,omitempty"`
 }
 
 type EmbeddingResponse struct {
@@ -36,6 +37,9 @@ func (c *Client) Embed(text string) ([]float64, error) {
 	reqBody := EmbeddingRequest{
 		Model:  c.Model,
 		Prompt: text,
+		Options: map[string]interface{}{
+			"num_ctx": 8192, // Request larger context window
+		},
 	}
 	jsonBody, _ := json.Marshal(reqBody)
 
@@ -46,7 +50,8 @@ func (c *Client) Embed(text string) ([]float64, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("ollama API error: %s", resp.Status)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ollama API error: %s - %s", resp.Status, string(body))
 	}
 
 	var embeddingResp EmbeddingResponse

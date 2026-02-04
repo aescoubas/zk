@@ -116,7 +116,8 @@ func (m searchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.list.SetSize(msg.Width, msg.Height)
+		// Reserve space for footer
+		m.list.SetSize(msg.Width, msg.Height-2)
 	}
 
 	m.list, cmd = m.list.Update(msg)
@@ -124,5 +125,11 @@ func (m searchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m searchModel) View() string {
-	return m.list.View()
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Width(m.width).Align(lipgloss.Center)
+	helpText := "Actions: [Enter] Open | [e] Edit | [Esc] Dashboard | [Type] Filter"
+	
+	// Calculate list height to reserve space for footer
+	listContent := m.list.View()
+	
+	return lipgloss.JoinVertical(lipgloss.Left, listContent, "\n", helpStyle.Render(helpText))
 }

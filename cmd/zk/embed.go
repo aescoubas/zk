@@ -84,7 +84,14 @@ func runEmbed() {
 
 		fmt.Printf("[%d/%d] Embedding %s...\n", i+1, len(notes), n.ID)
 		
-		vec, err := client.Embed(string(content))
+		text := string(content)
+		// Truncate to avoid context limit (aggressive limit 2000 chars)
+		if len(text) > 2000 {
+			text = text[:2000]
+		}
+		// fmt.Printf("Embedding %d chars...\n", len(text))
+
+		vec, err := client.Embed(text)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to embed %s: %v\n", n.ID, err)
 			continue
