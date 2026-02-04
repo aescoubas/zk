@@ -70,6 +70,7 @@ type dashboardModel struct {
 	isSearching  bool // Are we currently typing in the search bar? (Deprecated/Managed by mode)
 	isResults    bool // Are we displaying search results instead of all notes?
 	showHelp     bool // Show help overlay
+	statusMsg    string // Status message (e.g. "Indexing...")
 	llmClient    *llm.Client
 }
 
@@ -207,10 +208,66 @@ func (m dashboardModel) Init() tea.Cmd {
 	return nil
 }
 
+// New Msg type
+type editorFinishedMsg struct {
+	path string
+	err  error
+}
+
+type indexingFinishedMsg struct {
+	err error
+}
+
+type clearStatusMsg struct{}
+
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case editorFinishedMsg:
+		if msg.err != nil {
+			m.statusMsg = fmt.Sprintf("Editor error: %v", msg.err)
+			return m, nil
+		}
+		// Trigger indexing in background
+		m.statusMsg = fmt.Sprintf("Indexing %s...", filepath.Base(msg.path))
+		return m, func() tea.Msg {
+			err := IndexAndEmbedNote(m.root, msg.path)
+			return indexingFinishedMsg{err: err}
+		}
+
+	case indexingFinishedMsg:
+		if msg.err != nil {
+			m.statusMsg = fmt.Sprintf("Indexing failed: %v", msg.err)
+		} else {
+			m.statusMsg = "Indexing complete."
+		}
+		
+		// Refresh list and stats
+		notes, _ := m.store.ListNotes()
+		m.allNotes = notes
+		nc, lc, _ := m.store.GetStats()
+		m.noteCount = nc
+		m.linkCount = lc
+		
+		// If we are viewing results, refresh the search
+		if m.isResults {
+			if m.lastSearchType == focusSemantic {
+				return m, performSemanticSearch(m.llmClient, m.store, m.lastSearchQuery)
+			} else {
+				return m, performFullTextSearch(m.store, m.lastSearchQuery)
+			}
+		}
+		
+		// Clear status after 3 seconds
+		return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+			return clearStatusMsg{}
+		})
+	
+	case clearStatusMsg:
+		m.statusMsg = ""
+		return m, nil
+
 	case tea.KeyMsg:
 		// Delete Confirm Mode Logic
 		if m.mode == modeDeleteConfirm {
@@ -273,8 +330,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Create Note Mode Logic
 		if m.mode == modeCreateNote {
-			switch msg.String() {
-			case "enter":
+			switch {
+			case msg.Type == tea.KeyEnter:
 				title := m.createInput.Value()
 				if title != "" {
 					path, err := createNoteFile(title)
@@ -291,10 +348,13 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeNormal
 				m.createInput.Blur()
 				return m, nil
-			case "esc":
+			case msg.Type == tea.KeyEsc:
 				m.mode = modeNormal
 				m.createInput.Blur()
 				return m, nil
+			case msg.Type == tea.KeyCtrlC:
+				m.quitting = true
+				return m, tea.Quit
 			}
 			m.createInput, cmd = m.createInput.Update(msg)
 			return m, cmd
@@ -302,8 +362,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Insert Mode Logic
 		if m.mode == modeInsert {
-			switch msg.String() {
-			case "enter":
+			switch {
+			case msg.Type == tea.KeyEnter:
 				m.mode = modeNormal
 				m.isResults = true
 				var query string
@@ -320,11 +380,14 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ftsParams.Blur()
 					return m, performFullTextSearch(m.store, query)
 				}
-			case "esc":
+			case msg.Type == tea.KeyEsc:
 				m.mode = modeNormal
 				m.searchParams.Blur()
 				m.ftsParams.Blur()
 				return m, nil
+			case msg.Type == tea.KeyCtrlC:
+				m.quitting = true
+				return m, tea.Quit
 			}
 			
 			if m.middleFocus == focusSemantic {
@@ -683,12 +746,17 @@ func (m dashboardModel) View() string {
 		modeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxBlueBright)).Bold(true)
 	}
 
+	status := ""
+	if m.statusMsg != "" {
+		status = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxPurple)).Italic(true).Render(m.statusMsg)
+	}
+
 	// Help
-	helpText := fmt.Sprintf("[%s] h/l: Nav Cols | j/k: Nav Items | i: Insert | Enter: Open/Search | ?: Help", modeStyle.Render(modeStr))
+	helpText := fmt.Sprintf("[%s] h/l: Nav Cols | j/k: Nav Items | i: Insert | Enter: Open/Search | ?: Help %s", modeStyle.Render(modeStr), status)
 	if m.mode == modeDeleteConfirm {
-		helpText = fmt.Sprintf("[%s] Are you sure you want to delete '%s'? (y/n)", modeStyle.Render(modeStr), m.pendingDelete.Title)
+		helpText = fmt.Sprintf("[%s] Are you sure you want to delete '%s'? (y/n) %s", modeStyle.Render(modeStr), m.pendingDelete.Title, status)
 	} else if m.mode == modeCreateNote {
-		helpText = fmt.Sprintf("[%s] %s", modeStyle.Render(modeStr), m.createInput.View())
+		helpText = fmt.Sprintf("[%s] %s %s", modeStyle.Render(modeStr), m.createInput.View(), status)
 	}
 	help := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Width(m.width).Align(lipgloss.Center).Render(helpText)
 
@@ -742,6 +810,6 @@ func openEditor(root, path string) tea.Cmd {
 	fullPath := filepath.Join(root, path)
 	c := exec.Command(editor, fullPath)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
-		return nil // Maybe refresh?
+		return editorFinishedMsg{path: path, err: err}
 	})
 }

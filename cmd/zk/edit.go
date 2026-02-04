@@ -93,4 +93,12 @@ func runEdit(args []string) {
 		fmt.Fprintf(os.Stderr, "Error opening editor: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Index and Embed immediately
+	fmt.Printf("Updating index for %s...\n", selected.ID)
+	if err := IndexAndEmbedNote(absRoot, selected.Path); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	} else {
+		fmt.Println("Done.")
+	}
 }

@@ -48,6 +48,23 @@ func runNew(title string) {
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening editor: %v\n", err)
 	}
+
+	// Index and Embed immediately
+	fmt.Printf("Indexing and embedding %s...\n", path)
+	
+	// Re-resolve root since createNoteFile handled it internally but we need it here
+	absRoot, err := filepath.Abs(rootDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving root: %v\n", err)
+		return
+	}
+	
+	relPath, _ := filepath.Rel(absRoot, path)
+	if err := IndexAndEmbedNote(absRoot, relPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	} else {
+		fmt.Println("Done.")
+	}
 }
 
 func createNoteFile(title string) (string, error) {

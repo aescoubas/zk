@@ -205,7 +205,14 @@ func (s *Store) IndexNote(n *model.Note) error {
 		return err
 	}
 	defer stmtLinks.Close()
+
+	seenTargets := make(map[string]bool)
 	for _, l := range n.OutgoingLinks {
+		if seenTargets[l.TargetID] {
+			continue
+		}
+		seenTargets[l.TargetID] = true
+
 		_, err = stmtLinks.Exec(n.ID, l.TargetID, l.DisplayText)
 		if err != nil {
 			// Log error or ignore duplicates? Links pk is (source, target)
@@ -314,6 +321,36 @@ func (s *Store) GetNote(id string) (*model.Note, error) {
 		n.Summary = summary.String
 	}
 	n.ModTime = time.Unix(unixTime, 0)
+
+	// Fetch Outgoing Links
+	rows, err := s.db.Query(`SELECT target_id, display_text FROM links WHERE source_id = ?`, n.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch links: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var l model.Link
+		l.SourceID = n.ID
+		if err := rows.Scan(&l.TargetID, &l.DisplayText); err != nil {
+			return nil, err
+		}
+		n.OutgoingLinks = append(n.OutgoingLinks, l)
+	}
+
+	// Fetch Tags
+	tagRows, err := s.db.Query(`SELECT tag FROM tags WHERE note_id = ?`, n.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch tags: %w", err)
+	}
+	defer tagRows.Close()
+	for tagRows.Next() {
+		var t string
+		if err := tagRows.Scan(&t); err != nil {
+			return nil, err
+		}
+		n.Metadata.Tags = append(n.Metadata.Tags, t)
+	}
+
 	return &n, nil
 }
 
@@ -599,6 +636,10 @@ func (s *Store) GetAllEmbeddings() ([]*model.Embedding, error) {
 
 // SearchNotes performs a full-text search using FTS5.
 func (s *Store) SearchNotes(query string) ([]*model.Note, error) {
+	// Sanitize query: replace single quotes with spaces.
+	// This ensures that "don't" is treated as "don" AND "t", matching the tokenizer's output.
+	query = strings.ReplaceAll(query, "'", " ")
+
 	// FTS5 query
 	rows, err := s.db.Query(`
 		SELECT n.id, n.path, n.title, n.summary, n.hash, n.mod_time 
