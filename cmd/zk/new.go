@@ -98,6 +98,7 @@ Summary...
 ## Context / Details
 
 ## References
+<!-- Cite works with [@key] — see 'zk bib list' for available references -->
 `, title, time.Now().Format("2006-01-02"), title)
 
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {

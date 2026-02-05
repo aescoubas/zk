@@ -22,6 +22,8 @@ type navigateToReviewMsg struct{}
 
 type navigateToSearchMsg struct{}
 
+type navigateToBibliographyMsg struct{}
+
 var navCmd = &cobra.Command{
 	Use:   "nav",
 	Short: "Open the unified Zettelkasten Navigator",
@@ -41,6 +43,7 @@ const (
 	stateExplore
 	stateReview
 	stateSearch
+	stateBibliography
 )
 
 type navigatorModel struct {
@@ -48,10 +51,11 @@ type navigatorModel struct {
 	store *store.Store
 	root  string
 
-	dashboard dashboardModel
-	explore   exploreModel
-	review    reviewModel
-	search    searchModel
+	dashboard    dashboardModel
+	explore      exploreModel
+	review       reviewModel
+	search       searchModel
+	bibliography bibliographyModel
 
 	width  int
 	height int
@@ -122,6 +126,8 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.review, cmd = updateReview(m.review, msg)
 		case stateSearch:
 			m.search, cmd = updateSearch(m.search, msg)
+		case stateBibliography:
+			m.bibliography, cmd = updateBibliography(m.bibliography, msg)
 		}
 
 		return m, cmd
@@ -159,6 +165,12 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case navigateToBibliographyMsg:
+		m.state = stateBibliography
+		m.bibliography = newBibliographyModel(m.store, m.root)
+		m.bibliography, _ = updateBibliography(m.bibliography, tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		return m, nil
+
 	case navigateToReviewMsg:
 		m.state = stateReview
 		// Init review
@@ -184,6 +196,8 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.review, cmd = updateReview(m.review, msg)
 	case stateSearch:
 		m.search, cmd = updateSearch(m.search, msg)
+	case stateBibliography:
+		m.bibliography, cmd = updateBibliography(m.bibliography, msg)
 	}
 
 	return m, cmd
@@ -199,6 +213,8 @@ func (m navigatorModel) View() string {
 		return m.review.View()
 	case stateSearch:
 		return m.search.View()
+	case stateBibliography:
+		return m.bibliography.View()
 	}
 	return ""
 }
@@ -222,4 +238,9 @@ func updateReview(m reviewModel, msg tea.Msg) (reviewModel, tea.Cmd) {
 func updateSearch(m searchModel, msg tea.Msg) (searchModel, tea.Cmd) {
 	mod, cmd := m.Update(msg)
 	return mod.(searchModel), cmd
+}
+
+func updateBibliography(m bibliographyModel, msg tea.Msg) (bibliographyModel, tea.Cmd) {
+	mod, cmd := m.Update(msg)
+	return mod.(bibliographyModel), cmd
 }

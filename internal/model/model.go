@@ -24,6 +24,8 @@ type Note struct {
 	Metadata Metadata `json:"metadata"`
 	// OutgoingLinks is a list of links found in this note.
 	OutgoingLinks []Link `json:"outgoing_links"`
+	// Citations is a list of bibliographic citations found in this note.
+	Citations []Citation `json:"citations"`
 }
 
 // SRSItem represents the state of a note in the Spaced Repetition System.
@@ -84,4 +86,27 @@ type TagCount struct {
 type SimilarNote struct {
 	Note  *Note
 	Score float64
+}
+
+// Ref represents a bibliographic reference (book, movie, article, video, website).
+type Ref struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Title       string `json:"title"`
+	Author      string `json:"author"`
+	Year        string `json:"year"`
+	URL         string `json:"url"`
+	Description string `json:"description"`
+}
+
+// Citation represents a link from a note to a bibliographic reference.
+type Citation struct {
+	NoteID string `json:"note_id"`
+	RefID  string `json:"ref_id"`
+}
+
+// RefSummary represents a reference with its citation count.
+type RefSummary struct {
+	Ref       Ref `json:"ref"`
+	Citations int `json:"citations"`
 }

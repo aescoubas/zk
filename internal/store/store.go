@@ -101,6 +101,22 @@ CREATE TABLE IF NOT EXISTS embeddings (
 	vector BLOB,
 	model TEXT
 );
+
+CREATE TABLE IF NOT EXISTS refs (
+	id TEXT PRIMARY KEY,
+	type TEXT,
+	title TEXT,
+	author TEXT,
+	year TEXT,
+	url TEXT,
+	description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS citations (
+	note_id TEXT,
+	ref_id TEXT,
+	PRIMARY KEY (note_id, ref_id)
+);
 `
 
 // Store manages the SQLite database.
@@ -234,6 +250,23 @@ func (s *Store) IndexNote(n *model.Note) error {
 		_, err = stmtTags.Exec(n.ID, t)
 		if err != nil {
 			log.Printf("check tag insertion error: %v", err)
+		}
+	}
+
+	// 5. Update Citations
+	_, err = tx.Exec(`DELETE FROM citations WHERE note_id = ?`, n.ID)
+	if err != nil {
+		return fmt.Errorf("failed to delete old citations: %w", err)
+	}
+	stmtCite, err := tx.Prepare(`INSERT OR IGNORE INTO citations (note_id, ref_id) VALUES (?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmtCite.Close()
+	for _, c := range n.Citations {
+		_, err = stmtCite.Exec(n.ID, c.RefID)
+		if err != nil {
+			log.Printf("check citation insertion error: %v", err)
 		}
 	}
 
@@ -502,6 +535,12 @@ func (s *Store) DeleteNote(id string) error {
 	_, err = tx.Exec("DELETE FROM srs_items WHERE note_id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete srs item: %w", err)
+	}
+
+	// Delete from citations
+	_, err = tx.Exec("DELETE FROM citations WHERE note_id = ?", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete citations: %w", err)
 	}
 
 	return tx.Commit()
@@ -810,4 +849,148 @@ func (s *Store) GetStubCount() (int, error) {
 	var count int
 	err := s.db.QueryRow(`SELECT count(*) FROM notes_fts WHERE length(content) < 100`).Scan(&count)
 	return count, err
+}
+
+// --- Bibliography/Reference Methods ---
+
+// UpsertRef inserts or updates a bibliographic reference.
+func (s *Store) UpsertRef(r *model.Ref) error {
+	_, err := s.db.Exec(`
+		INSERT INTO refs (id, type, title, author, year, url, description)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			type=excluded.type,
+			title=excluded.title,
+			author=excluded.author,
+			year=excluded.year,
+			url=excluded.url,
+			description=excluded.description
+	`, r.ID, r.Type, r.Title, r.Author, r.Year, r.URL, r.Description)
+	return err
+}
+
+// GetRef retrieves a reference by ID.
+func (s *Store) GetRef(id string) (*model.Ref, error) {
+	row := s.db.QueryRow(`SELECT id, type, title, author, year, url, description FROM refs WHERE id = ?`, id)
+	var r model.Ref
+	var refType, author, year, url, desc sql.NullString
+	err := row.Scan(&r.ID, &refType, &r.Title, &author, &year, &url, &desc)
+	if err != nil {
+		return nil, err
+	}
+	if refType.Valid {
+		r.Type = refType.String
+	}
+	if author.Valid {
+		r.Author = author.String
+	}
+	if year.Valid {
+		r.Year = year.String
+	}
+	if url.Valid {
+		r.URL = url.String
+	}
+	if desc.Valid {
+		r.Description = desc.String
+	}
+	return &r, nil
+}
+
+// DeleteRef removes a reference and its citations.
+func (s *Store) DeleteRef(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec("DELETE FROM citations WHERE ref_id = ?", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete citations for ref: %w", err)
+	}
+	_, err = tx.Exec("DELETE FROM refs WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete ref: %w", err)
+	}
+	return tx.Commit()
+}
+
+// ListRefSummaries retrieves all references with citation counts.
+func (s *Store) ListRefSummaries() ([]model.RefSummary, error) {
+	query := `
+		SELECT r.id, r.type, r.title, r.author, r.year, r.url, r.description,
+		       (SELECT COUNT(*) FROM citations c WHERE c.ref_id = r.id) AS cite_count
+		FROM refs r
+		ORDER BY cite_count DESC, r.title ASC
+	`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []model.RefSummary
+	for rows.Next() {
+		var rs model.RefSummary
+		var refType, author, year, url, desc sql.NullString
+		if err := rows.Scan(&rs.Ref.ID, &refType, &rs.Ref.Title, &author, &year, &url, &desc, &rs.Citations); err != nil {
+			return nil, err
+		}
+		if refType.Valid {
+			rs.Ref.Type = refType.String
+		}
+		if author.Valid {
+			rs.Ref.Author = author.String
+		}
+		if year.Valid {
+			rs.Ref.Year = year.String
+		}
+		if url.Valid {
+			rs.Ref.URL = url.String
+		}
+		if desc.Valid {
+			rs.Ref.Description = desc.String
+		}
+		summaries = append(summaries, rs)
+	}
+	return summaries, nil
+}
+
+// GetRefCount returns the total number of references.
+func (s *Store) GetRefCount() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT count(*) FROM refs`).Scan(&count)
+	return count, err
+}
+
+// GetCitingNotes returns notes that cite a given reference.
+func (s *Store) GetCitingNotes(refID string) ([]*model.Note, error) {
+	query := `
+		SELECT n.id, n.path, n.title, n.summary, n.hash, n.mod_time
+		FROM notes n
+		JOIN citations c ON n.id = c.note_id
+		WHERE c.ref_id = ?
+		ORDER BY n.mod_time DESC
+	`
+	rows, err := s.db.Query(query, refID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notes []*model.Note
+	for rows.Next() {
+		var n model.Note
+		var unixTime int64
+		var summary sql.NullString
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime); err != nil {
+			return nil, err
+		}
+		if summary.Valid {
+			n.Summary = summary.String
+		}
+		n.ModTime = time.Unix(unixTime, 0)
+		notes = append(notes, &n)
+	}
+	return notes, nil
 }

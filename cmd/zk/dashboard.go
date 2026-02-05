@@ -39,7 +39,10 @@ type dashboardModel struct {
 	linkCount   int
 	orphanCount int
 	stubCount   int
-	allNotes    []*model.Note
+	refCount     int
+	refSummaries []model.RefSummary
+	bibCursor    int
+	allNotes     []*model.Note
 	searchResults []model.SimilarNote
 	topics      []model.TagCount
 	snippet     string
@@ -82,6 +85,8 @@ func NewDashboardModel(st *store.Store, root string) (dashboardModel, error) {
 
 	orphans, _ := st.GetOrphanCount()
 	stubs, _ := st.GetStubCount()
+	refs, _ := st.GetRefCount()
+	refSummaries, _ := st.ListRefSummaries()
 
 	allNotes, err := st.ListNotes()
 	if err != nil {
@@ -119,6 +124,8 @@ func NewDashboardModel(st *store.Store, root string) (dashboardModel, error) {
 		linkCount:    linkCount,
 		orphanCount:  orphans,
 		stubCount:    stubs,
+		refCount:     refs,
+		refSummaries: refSummaries,
 		allNotes:     allNotes,
 		topics:       topics,
 		snippet:      snippet,
@@ -249,7 +256,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		nc, lc, _ := m.store.GetStats()
 		m.noteCount = nc
 		m.linkCount = lc
-		
+		m.refCount, _ = m.store.GetRefCount()
+		m.refSummaries, _ = m.store.ListRefSummaries()
+
 		// If we are viewing results, refresh the search
 		if m.isResults {
 			if m.lastSearchType == focusSemantic {
@@ -425,7 +434,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			
 		// Vertical Navigation within Columns
 		case "j", "down":
-			if m.activeColumn == colMiddle {
+			if m.activeColumn == colStats {
+				if m.bibCursor < len(m.refSummaries)-1 {
+					m.bibCursor++
+				}
+			} else if m.activeColumn == colMiddle {
 				if m.middleFocus < focusFTS {
 					m.middleFocus++
 				}
@@ -446,7 +459,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "k", "up":
-			if m.activeColumn == colMiddle {
+			if m.activeColumn == colStats {
+				if m.bibCursor > 0 {
+					m.bibCursor--
+				}
+			} else if m.activeColumn == colMiddle {
 				if m.middleFocus > focusSemantic {
 					m.middleFocus--
 				}
@@ -462,7 +479,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Enter Insert Mode
 		case "i", "enter":
-			if m.activeColumn == colMiddle {
+			if m.activeColumn == colStats {
+				if len(m.refSummaries) > 0 && m.bibCursor < len(m.refSummaries) {
+					return m, func() tea.Msg { return navigateToBibliographyMsg{} }
+				}
+			} else if m.activeColumn == colMiddle {
 				m.mode = modeInsert
 				if m.middleFocus == focusSemantic {
 					m.searchParams.Focus()
@@ -535,6 +556,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "s":
 			return m, func() tea.Msg { return navigateToReviewMsg{} }
+		case "b":
+			return m, func() tea.Msg { return navigateToBibliographyMsg{} }
 		}
 	case searchResultMsg:
 		m.searchResults = msg
@@ -615,7 +638,46 @@ func (m dashboardModel) View() string {
 	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Links:"), statValue.Render(fmt.Sprint(m.linkCount)))
 	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Orphans:"), statValue.Render(fmt.Sprint(m.orphanCount)))
 	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Stubs:"), statValue.Render(fmt.Sprint(m.stubCount)))
-	statsBox := statsBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, headerStyle.Render("Stats"), statsContent))
+	statsContent += fmt.Sprintf("%s %s\n", statLabel.Render("Refs:"), statValue.Render(fmt.Sprint(m.refCount)))
+
+	// Bibliography section
+	bibHeader := headerStyle.Render("Bibliography")
+	bibContent := ""
+	if len(m.refSummaries) == 0 {
+		bibContent = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Render("No refs yet")
+	} else {
+		bibItemStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxFg))
+		bibSelectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxOrangeBright)).SetString("> ")
+		bibCountStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxPurpleBright))
+		maxBibItems := m.height - 22
+		if maxBibItems < 3 {
+			maxBibItems = 3
+		}
+		shown := len(m.refSummaries)
+		if shown > maxBibItems {
+			shown = maxBibItems
+		}
+		for i := 0; i < shown; i++ {
+			rs := m.refSummaries[i]
+			line := fmt.Sprintf("%s %s", bibCountStyle.Render(fmt.Sprintf("[%d]", rs.Citations)), rs.Ref.Title)
+			avail := colWidth - 6
+			if len(line) > avail && avail > 5 {
+				line = line[:avail-1] + "…"
+			}
+			if m.activeColumn == colStats && i == m.bibCursor {
+				bibContent += bibSelectedStyle.Render(line) + "\n"
+			} else {
+				bibContent += bibItemStyle.Render("  "+line) + "\n"
+			}
+		}
+		if len(m.refSummaries) > maxBibItems {
+			bibContent += lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Render(
+				fmt.Sprintf("  … +%d more", len(m.refSummaries)-maxBibItems))
+		}
+	}
+
+	statsBox := statsBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
+		headerStyle.Render("Stats"), statsContent, "\n", bibHeader, bibContent))
 
 	// Topics Column
 	topicsContent := ""
@@ -791,6 +853,7 @@ func (m dashboardModel) View() string {
         d                 Delete Selected Note
         n                 New Note
         s                 Review Mode (SRS)
+        b                 Bibliography
         r                 Random Note
         ?                 Toggle Help
         q, Ctrl+C         Quit

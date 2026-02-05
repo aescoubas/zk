@@ -135,6 +135,9 @@ func (p *Parser) ParseFile(root, path string) (*model.Note, error) {
 	// Extract Links (Regex for now)
 	links := extractLinks(string(content), id)
 
+	// Extract Citations [@key]
+	citations := extractCitations(string(content), id)
+
 	note := &model.Note{
 		ID:         id,
 		Path:       path,
@@ -148,12 +151,14 @@ func (p *Parser) ParseFile(root, path string) (*model.Note, error) {
 			Frontmatter: frontmatter,
 		},
 		OutgoingLinks: links,
+		Citations:     citations,
 	}
 
 	return note, nil
 }
 
 var linkRegex = regexp.MustCompile(`\[\[(.*?)\]\]`)
+var citationRegex = regexp.MustCompile(`\[@([a-zA-Z0-9_-]+)\]`)
 
 func extractLinks(content, sourceID string) []model.Link {
 	matches := linkRegex.FindAllStringSubmatch(content, -1)
@@ -190,4 +195,26 @@ func extractLinks(content, sourceID string) []model.Link {
 		})
 	}
 	return links
+}
+
+func extractCitations(content, sourceID string) []model.Citation {
+	matches := citationRegex.FindAllStringSubmatch(content, -1)
+	var citations []model.Citation
+	seen := make(map[string]bool)
+
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		refID := m[1]
+		if seen[refID] {
+			continue
+		}
+		seen[refID] = true
+		citations = append(citations, model.Citation{
+			NoteID: sourceID,
+			RefID:  refID,
+		})
+	}
+	return citations
 }
