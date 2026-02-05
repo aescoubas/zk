@@ -123,18 +123,31 @@ func initializeExploreModel(st *store.Store, root string, start *model.Note) exp
 		focus:   focusOutgoing,
 	}
 	
+	// Custom Delegate with Gruvbox Styles
+	delegate := list.NewDefaultDelegate()
+	delegate.Styles.NormalTitle = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxFg))
+	delegate.Styles.NormalDesc = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray))
+	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(GruvboxOrangeBright)).
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(lipgloss.Color(GruvboxOrangeBright)).
+		PaddingLeft(1)
+	delegate.Styles.SelectedDesc = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(GruvboxYellow)).
+		PaddingLeft(1)
+
 	// Init Lists
-	m.listIn = list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	m.listIn = list.New([]list.Item{}, delegate, 0, 0)
 	m.listIn.Title = "Backlinks"
 	m.listIn.SetShowHelp(false)
 	m.listIn.Styles.Title = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxAqua)).Bold(true)
 	
-	m.listOut = list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	m.listOut = list.New([]list.Item{}, delegate, 0, 0)
 	m.listOut.Title = "Links To"
 	m.listOut.SetShowHelp(false)
 	m.listOut.Styles.Title = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxBlue)).Bold(true)
 
-	m.listSimilar = list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	m.listSimilar = list.New([]list.Item{}, delegate, 0, 0)
 	m.listSimilar.Title = "Similar"
 	m.listSimilar.SetShowHelp(false)
 	m.listSimilar.Styles.Title = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxPurple)).Bold(true)
