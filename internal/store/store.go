@@ -156,6 +156,15 @@ func (s *Store) initFTS() {
 		s.hasFTS = false
 		return
 	}
+	// Verify FTS5 actually works — the CREATE may be a no-op if the table
+	// already exists from a session that had FTS5, but the current binary
+	// may lack the module.
+	_, err = s.db.Exec(`SELECT count(*) FROM notes_fts LIMIT 1`)
+	if err != nil {
+		log.Printf("FTS5 table exists but module unavailable (full-text search disabled): %v", err)
+		s.hasFTS = false
+		return
+	}
 	s.hasFTS = true
 }
 
