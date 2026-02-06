@@ -44,6 +44,7 @@ const (
 	stateReview
 	stateSearch
 	stateBibliography
+	stateWalkGraph
 )
 
 type navigatorModel struct {
@@ -51,11 +52,12 @@ type navigatorModel struct {
 	store *store.Store
 	root  string
 
-	dashboard    dashboardModel
-	explore      exploreModel
-	review       reviewModel
-	search       searchModel
-	bibliography bibliographyModel
+	dashboard     dashboardModel
+	explore       exploreModel
+	review        reviewModel
+	search        searchModel
+	bibliography  bibliographyModel
+	walkGraphView walkGraphModel
 
 	width  int
 	height int
@@ -128,6 +130,8 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.search, cmd = updateSearch(m.search, msg)
 		case stateBibliography:
 			m.bibliography, cmd = updateBibliography(m.bibliography, msg)
+		case stateWalkGraph:
+			m.walkGraphView, cmd = updateWalkGraph(m.walkGraphView, msg)
 		}
 
 		return m, cmd
@@ -171,6 +175,27 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.bibliography, _ = updateBibliography(m.bibliography, tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		return m, nil
 
+	case navigateToWalkGraphMsg:
+		if m.explore.walk != nil {
+			m.state = stateWalkGraph
+			m.walkGraphView = newWalkGraphModel(m.explore.walk, m.store, m.root)
+			m.walkGraphView, _ = updateWalkGraph(m.walkGraphView, tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		}
+		return m, nil
+
+	case navigateToExploreJumpMsg:
+		if m.explore.walk != nil {
+			noteID := m.explore.walk.jumpTo(msg.nodeID)
+			if noteID != "" {
+				n, err := m.store.GetNote(noteID)
+				if err == nil {
+					m.state = stateExplore
+					m.explore, _ = updateExplore(m.explore, exploreJumpMsg{note: n})
+				}
+			}
+		}
+		return m, nil
+
 	case navigateToReviewMsg:
 		m.state = stateReview
 		// Init review
@@ -198,6 +223,8 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.search, cmd = updateSearch(m.search, msg)
 	case stateBibliography:
 		m.bibliography, cmd = updateBibliography(m.bibliography, msg)
+	case stateWalkGraph:
+		m.walkGraphView, cmd = updateWalkGraph(m.walkGraphView, msg)
 	}
 
 	return m, cmd
@@ -215,6 +242,8 @@ func (m navigatorModel) View() string {
 		return m.search.View()
 	case stateBibliography:
 		return m.bibliography.View()
+	case stateWalkGraph:
+		return m.walkGraphView.View()
 	}
 	return ""
 }
@@ -243,4 +272,9 @@ func updateSearch(m searchModel, msg tea.Msg) (searchModel, tea.Cmd) {
 func updateBibliography(m bibliographyModel, msg tea.Msg) (bibliographyModel, tea.Cmd) {
 	mod, cmd := m.Update(msg)
 	return mod.(bibliographyModel), cmd
+}
+
+func updateWalkGraph(m walkGraphModel, msg tea.Msg) (walkGraphModel, tea.Cmd) {
+	mod, cmd := m.Update(msg)
+	return mod.(walkGraphModel), cmd
 }

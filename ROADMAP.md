@@ -144,7 +144,22 @@ Refining the core exploration and listing capabilities for better usability.
         - Number of backlinks (incoming links)
         - Number of outgoing links
 
-### Phase 15: Graph Connectivity & Traversal
-Ensuring the Zettelkasten is a fully connected graph starting from a clear entry point.
-- [ ] **Root Node Implementation**: Ensure `zk explore` opens a dedicated "Index" or "Root" note that explicitly links to major entry points/topics, rather than an empty or disconnected view.
-- [ ] **Graph Integrity**: Achieve full connectivity where every note is reachable from the root (eliminate "islands" recursively).
+### Phase 15: Navigation Walk Graph — Data Model & Session Tracking
+The in-memory data structure and integration with the explore view's navigation events.
+- [x] **Walk Graph Data Structure**: Define a tree structure (`walkGraph` with `walkNode` structs) holding node ID, note reference, children, parent pointer, visit timestamp, and edge label (link type).
+- [x] **Session-Scoped Lifecycle**: Instantiate the walk graph when the navigator starts; pass it to the explore model. No persistence — it dies with the process.
+- [x] **Record Navigation Events**: On every "follow link" action in explore (Enter on backlink/outgoing/similar/citation), append a child node to the current position in the walk graph.
+- [x] **Handle Backtracking & Branching**: When the user presses Backspace (back), move the current-position cursor to the parent node. The next "follow link" creates a *new sibling* branch rather than overwriting the old path.
+- [x] **Graph-Jump vs Organic Navigation**: Add a `jumpTo(nodeID)` method that moves the explore view's current note *and* the walk graph cursor to an existing node, without creating new edges. Only organic navigation (following links from a note's panels) creates new nodes/edges.
+- [x] **Replace Flat History Stack**: The walk graph's parent pointers subsume the `history []string` slice. Back = move to parent; the old stack is no longer needed.
+
+### Phase 16: Navigation Walk Graph — TUI Visualization & Interaction
+A new TUI view rendering the walk graph as a scrollable ASCII tree with node selection.
+- [x] **Tree Layout Algorithm**: Implement a layout pass that assigns (x, y) coordinates to each node in the walk graph, producing a top-down tree with box-drawing connectors (`│ ─ ┬ ├ └ ╴`).
+- [x] **Graph View Model**: New `walkGraphModel` implementing `Init/Update/View`, registered as a new navigator state (`stateWalkGraph`) with a `navigateToWalkGraphMsg`.
+- [x] **Rendering**: Render each node as a compact label (truncated title, ~30 chars). Highlight the current-position node distinctly (bold/color). Use Gruvbox palette consistent with the rest of the TUI.
+- [x] **Scrollable Viewport**: Embed in a `viewport.Model` so tall/wide graphs can be scrolled vertically and horizontally.
+- [x] **Cursor Navigation**: `j/k` (or arrows) to move selection between nodes in depth-first order. Visual indicator on the selected node.
+- [x] **Jump-to-Node**: Press Enter on a selected node to jump back to explore view on that note (via `jumpTo`, no graph mutation).
+- [x] **Access from Explore**: Press `g` in explore to open the walk graph view. Press `q`/`Esc` in graph view to return to explore at the current position.
+- [x] **Stats Footer**: Show total nodes visited, max depth, number of branches in a status bar.

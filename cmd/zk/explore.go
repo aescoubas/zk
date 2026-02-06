@@ -96,8 +96,8 @@ type exploreModel struct {
 	store    *store.Store
 	root     string
 	
-	current  *model.Note
-	history  []string
+	current *model.Note
+	walk    *walkGraph
 	
 	incoming []list.Item
 	outgoing []list.Item
@@ -120,6 +120,7 @@ func initializeExploreModel(st *store.Store, root string, start *model.Note) exp
 		store:   st,
 		root:    root,
 		current: start,
+		walk:    newWalkGraph(start.ID, start.Title),
 		focus:   focusOutgoing,
 	}
 	
@@ -234,6 +235,10 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case exploreJumpMsg:
+		m.current = msg.note
+		m.loadData()
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
@@ -254,22 +259,26 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			var selected *model.Note
+			var edge edgeLabel
 			if m.focus == focusIncoming {
 				if i, ok := m.listIn.SelectedItem().(item); ok {
 					selected = i.note
+					edge = edgeBacklink
 				}
 			} else if m.focus == focusOutgoing {
 				if i, ok := m.listOut.SelectedItem().(item); ok {
 					selected = i.note
+					edge = edgeOutgoing
 				}
 			} else if m.focus == focusSimilar {
 				if i, ok := m.listSimilar.SelectedItem().(similarItem); ok {
 					selected = i.note
+					edge = edgeSimilar
 				}
 			}
-			
+
 			if selected != nil && selected.Path != "" {
-				m.history = append(m.history, m.current.ID)
+				m.walk.addChild(selected.ID, selected.Title, edge)
 				m.current = selected
 				m.loadData()
 			}
@@ -286,10 +295,8 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "backspace":
-			if len(m.history) > 0 {
-				prevID := m.history[len(m.history)-1]
-				m.history = m.history[:len(m.history)-1]
-				n, err := m.store.GetNote(prevID)
+			if m.walk.back() {
+				n, err := m.store.GetNote(m.walk.current.noteID)
 				if err == nil {
 					m.current = n
 					m.loadData()
@@ -297,6 +304,8 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "e":
 			return m, openEditor(m.root, m.current.Path)
+		case "g":
+			return m, func() tea.Msg { return navigateToWalkGraphMsg{} }
 		}
 
 	case tea.WindowSizeMsg:
@@ -430,7 +439,7 @@ func (m exploreModel) View() string {
 	
 	// Help Footer
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Width(m.width).Align(lipgloss.Center)
-	helpText := "Actions: [Tab] Cycle Focus | [h/l] Nav Cols | [Enter] Select | [e] Edit | [a] Append Link | [Back] History | [q] Dashboard"
+	helpText := "Actions: [Tab] Cycle Focus | [h/l] Nav Cols | [Enter] Select | [e] Edit | [a] Append Link | [Back] Back | [g] Graph | [q] Dashboard"
 	footer := helpStyle.Render(helpText)
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, lipgloss.JoinVertical(lipgloss.Center, content, "\n", footer))
