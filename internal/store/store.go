@@ -86,8 +86,6 @@ CREATE TABLE IF NOT EXISTS tags (
 	PRIMARY KEY (note_id, tag)
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id UNINDEXED, title, content);
-
 CREATE TABLE IF NOT EXISTS srs_items (
 	note_id TEXT PRIMARY KEY,
 	next_review INTEGER,
@@ -121,7 +119,8 @@ CREATE TABLE IF NOT EXISTS citations (
 
 // Store manages the SQLite database.
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	hasFTS bool
 }
 
 // NewStore initializes the database connection and schema.
@@ -145,8 +144,19 @@ func NewStore(dbPath string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	s.initFTS()
 
 	return s, nil
+}
+
+func (s *Store) initFTS() {
+	_, err := s.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id UNINDEXED, title, content)`)
+	if err != nil {
+		log.Printf("FTS5 not available (full-text search disabled): %v", err)
+		s.hasFTS = false
+		return
+	}
+	s.hasFTS = true
 }
 
 func (s *Store) initSchema() error {
@@ -200,15 +210,16 @@ func (s *Store) IndexNote(n *model.Note) error {
 		return fmt.Errorf("failed to upsert note: %w", err)
 	}
 
-	// 2. Update FTS
-	// We delete first to ensure no duplicates in FTS if ID exists (FTS doesn't support ON CONFLICT REPLACE standardly like tables)
-	_, err = tx.Exec(`DELETE FROM notes_fts WHERE id = ?`, n.ID)
-	if err != nil {
-		return fmt.Errorf("failed to delete fts: %w", err)
-	}
-	_, err = tx.Exec(`INSERT INTO notes_fts (id, title, content) VALUES (?, ?, ?)`, n.ID, n.Title, n.RawContent)
-	if err != nil {
-		return fmt.Errorf("failed to insert fts: %w", err)
+	// 2. Update FTS (if available)
+	if s.hasFTS {
+		_, err = tx.Exec(`DELETE FROM notes_fts WHERE id = ?`, n.ID)
+		if err != nil {
+			return fmt.Errorf("failed to delete fts: %w", err)
+		}
+		_, err = tx.Exec(`INSERT INTO notes_fts (id, title, content) VALUES (?, ?, ?)`, n.ID, n.Title, n.RawContent)
+		if err != nil {
+			return fmt.Errorf("failed to insert fts: %w", err)
+		}
 	}
 
 	// 3. Update Links (Naive: Delete all for source, re-insert)
@@ -519,10 +530,12 @@ func (s *Store) DeleteNote(id string) error {
 		return fmt.Errorf("failed to delete outgoing links: %w", err)
 	}
 	
-	// Delete from FTS
-	_, err = tx.Exec("DELETE FROM notes_fts WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("failed to delete from fts: %w", err)
+	// Delete from FTS (if available)
+	if s.hasFTS {
+		_, err = tx.Exec("DELETE FROM notes_fts WHERE id = ?", id)
+		if err != nil {
+			return fmt.Errorf("failed to delete from fts: %w", err)
+		}
 	}
 
 	// Delete from notes
@@ -674,19 +687,55 @@ func (s *Store) GetAllEmbeddings() ([]*model.Embedding, error) {
 }
 
 // SearchNotes performs a full-text search using FTS5.
+// Falls back to LIKE-based search if FTS5 is not available.
 func (s *Store) SearchNotes(query string) ([]*model.Note, error) {
+	if !s.hasFTS {
+		return s.searchNotesLike(query)
+	}
+
 	// Sanitize query: replace single quotes with spaces.
 	// This ensures that "don't" is treated as "don" AND "t", matching the tokenizer's output.
 	query = strings.ReplaceAll(query, "'", " ")
 
 	// FTS5 query
 	rows, err := s.db.Query(`
-		SELECT n.id, n.path, n.title, n.summary, n.hash, n.mod_time 
+		SELECT n.id, n.path, n.title, n.summary, n.hash, n.mod_time
 		FROM notes n
 		JOIN notes_fts f ON n.id = f.id
 		WHERE notes_fts MATCH ?
 		ORDER BY rank
 	`, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notes []*model.Note
+	for rows.Next() {
+		var n model.Note
+		var unixTime int64
+		var summary sql.NullString
+		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime); err != nil {
+			return nil, err
+		}
+		if summary.Valid {
+			n.Summary = summary.String
+		}
+		n.ModTime = time.Unix(unixTime, 0)
+		notes = append(notes, &n)
+	}
+	return notes, nil
+}
+
+// searchNotesLike is a fallback search using LIKE when FTS5 is unavailable.
+func (s *Store) searchNotesLike(query string) ([]*model.Note, error) {
+	like := "%" + query + "%"
+	rows, err := s.db.Query(`
+		SELECT id, path, title, summary, hash, mod_time
+		FROM notes
+		WHERE title LIKE ? OR id LIKE ?
+		ORDER BY mod_time DESC
+	`, like, like)
 	if err != nil {
 		return nil, err
 	}
@@ -846,6 +895,9 @@ func (s *Store) GetOrphanCount() (int, error) {
 
 // GetStubCount returns the number of short notes (e.g. < 100 chars in FTS).
 func (s *Store) GetStubCount() (int, error) {
+	if !s.hasFTS {
+		return 0, nil
+	}
 	var count int
 	err := s.db.QueryRow(`SELECT count(*) FROM notes_fts WHERE length(content) < 100`).Scan(&count)
 	return count, err
