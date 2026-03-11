@@ -14,7 +14,7 @@ We decided to rewrite the core engine in **Go**, utilizing **SQLite** as the bac
 ## Consequences
 - **Pros**:
     - Faster search and graph operations.
-    - Single binary distribution (`bin/zk-go`).
+    - Single binary distribution (`bin/zk`).
     - Type safety and better maintainability.
     - Ecosystem ready for TUI and LSP.
 - **Cons**:

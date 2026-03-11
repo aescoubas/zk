@@ -10,18 +10,29 @@
 *   `ARCHITECTURE/000-readme.md` (Architecture overview)
 *   `ARCHITECTURE/001-go-sqlite-engine.md` (SQLite engine ADR)
 *   `ARCHITECTURE/002-mcp-integration.md` (MCP integration ADR)
-*   `tools/zk-go/go.mod` (Go dependencies)
+*   `ARCHITECTURE/003-separate-tool-and-data-repositories.md` (Repo split ADR)
+*   `ARCHITECTURE/004-move-maintenance-commands-into-zk.md` (Maintenance command ADR)
+*   `ARCHITECTURE/005-separate-durable-state-from-derived-index.md` (Index/state separation ADR)
+*   `go.mod` (Go dependencies)
 
 ### Dynamic Context (Source Code)
-*   `tools/zk-go/cmd/zk/` (CLI commands & TUI models)
-*   `tools/zk-go/internal/model/` (Data types: Note, Link, Ref, Citation)
-*   `tools/zk-go/internal/store/` (SQLite storage layer)
-*   `tools/zk-go/internal/parser/` (Markdown + frontmatter + WikiLinks + citations)
-*   `tools/zk-go/internal/lsp/` (Language Server Protocol)
-*   `tools/zk-go/internal/mcp/` (Model Context Protocol)
-*   `tools/zk-go/internal/srs/` (Spaced Repetition algorithm)
-*   `tools/zk-go/internal/llm/` (Ollama embeddings client)
-*   `zettels/` (Flat directory of ~166 atomic markdown notes)
+*   `cmd/zk/` (CLI commands & TUI models)
+*   `internal/model/` (Data types: Note, Link, Ref, Citation)
+*   `internal/store/` (SQLite storage layer)
+*   `internal/parser/` (Markdown + frontmatter + WikiLinks + citations)
+*   `internal/lsp/` (Language Server Protocol)
+*   `internal/mcp/` (Model Context Protocol)
+*   `internal/srs/` (Spaced Repetition algorithm)
+*   `internal/llm/` (Ollama embeddings client)
+*   `tools/editors/` and `tools/vim/` (Editor integration)
+*   External data repo (typically `zettelkasten-data/`) for `zettels/`, `projects/`, `kanban/`, and `archive/`
+
+### External Runtime Context
+*   Root resolution precedence: `--dir`, `ZK_PATH`, `~/.config/zk/root`, current working directory when it contains `zettels/`
+*   `.zk/index.db` is a rebuildable derived index
+*   Local SRS state lives under `XDG_STATE_HOME` / `~/.local/state`
+
+> Historical note: Phases 1-5 below were completed in the original combined repository before the tool and data were split.
 
 ---
 
@@ -206,7 +217,7 @@ Replace the Python scripts with a unified Go binary and add a rich terminal UI u
 
 **Verification:**
 - [x] All original `zk` commands work via the Go binary.
-- [x] `zk nav` launches the TUI with a browsable note list.
+- [x] `zk tui` launches the TUI with a browsable note list.
 - [x] Fuzzy filter narrows results in real time.
 
 ---
@@ -326,7 +337,7 @@ Move visualization and interaction entirely into the terminal for a seamless, Gr
     - [x] Improve error messages and help text for all commands.
 
 **Verification:**
-- [x] `zk nav` opens a dashboard with stats and quick actions.
+- [x] `zk tui` opens a dashboard with stats and quick actions.
 - [x] Graph explorer renders nodes and edges navigable by keyboard.
 - [x] Help text (`?`) is consistent across all TUI views.
 
@@ -341,7 +352,7 @@ Move visualization and interaction entirely into the terminal for a seamless, Gr
 Refine the core exploration and listing capabilities for better usability.
 
 **Tasks:**
-- [x] **`zk explore` Enhancements:**
+- [x] **Explore View Enhancements:**
     - [x] **Root Index:** Open the root of the zettelkasten with an index page that links various sections.
     - [x] **Syntax Highlighting:** Use syntax highlighting when displaying a note in the explore view.
 - [x] **`zk list` Enhancements:**
@@ -349,7 +360,7 @@ Refine the core exploration and listing capabilities for better usability.
     - [x] **Rich Columns:** Display creation date, last modification date, topic, backlinks count, and outgoing links count.
 
 **Verification:**
-- [x] `zk explore` opens the index page by default.
+- [x] The explore view opens the index page by default.
 - [x] `zk list` renders a rich table with all metadata columns.
 
 ---
@@ -399,3 +410,43 @@ A new TUI view rendering the walk graph as a scrollable ASCII tree with node sel
 - [x] `g` from explore opens the walk graph with correct tree rendering.
 - [x] Cursor navigation and jump-to-node work correctly.
 - [x] Unit tests pass for tree layout, truncation, and edge indicators (`walkgraphview_test.go`).
+
+---
+
+### Phase 17: Repository Split
+**Status:** DONE
+**Token Budget:** Medium
+**Prerequisites:** Phase 8
+
+**Objective:**
+Separate the `zk` toolchain from the Zettelkasten content so the binary and editor integrations can target an external data repository.
+
+**Tasks:**
+- [x] **Tool Repo Extraction:** Keep the Go module, install workflow, editor integrations, and ADRs in the dedicated `zk` repository.
+- [x] **External Data Root Resolution:** Support data-root discovery via `--dir`, `ZK_PATH`, `~/.config/zk/root`, and current working directory fallback only when the directory clearly looks like a data root.
+- [x] **Split-Aware Documentation:** Update build, install, and editor setup docs to reflect the dedicated tool repo plus external data repo workflow.
+
+**Verification:**
+- [x] `go test -tags fts5 ./...` passes in the `zk` repository.
+- [x] `zk` commands resolve an external data repository without relying on the old monorepo layout.
+
+---
+
+### Phase 18: Maintenance Command Consolidation
+**Status:** DONE
+**Token Budget:** Medium
+**Prerequisites:** Phase 17
+
+**Objective:**
+Make linting and graph generation part of the Go toolchain so a system-wide `zk` install can operate against a configured external data repository without Python scripts.
+
+**Tasks:**
+- [x] Add a first-class `zk lint` command for dead links and orphan reporting in `zettels/`.
+- [x] Add a first-class `zk graph` command that writes standalone HTML from embedded template data.
+- [x] Support explicit data-root configuration during installation.
+- [x] Remove Python maintenance scripts from the companion data repository.
+
+**Verification:**
+- [x] `go test -tags fts5 ./...` passes in the `zk` repository.
+- [x] `zk --dir <repo> lint` runs against the external data repository without Python.
+- [x] `zk --dir <repo> graph --output <path>` generates standalone graph HTML.

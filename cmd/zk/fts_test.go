@@ -25,6 +25,9 @@ func TestFTSSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	if !st.HasFTS() {
+		t.Skip("FTS5 not available in this build")
+	}
 
 	// 1. Create a note manually
 	content := `---
@@ -44,7 +47,7 @@ You don't know what you are doing`
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
-	
+
 	// Verify RawContent
 	if !strings.Contains(note.RawContent, "You don't know what") {
 		t.Errorf("RawContent missing text. Got: %s", note.RawContent)

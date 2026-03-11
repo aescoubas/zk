@@ -24,16 +24,16 @@ type navigateToSearchMsg struct{}
 
 type navigateToBibliographyMsg struct{}
 
-var navCmd = &cobra.Command{
-	Use:   "nav",
-	Short: "Open the unified Zettelkasten Navigator",
+var tuiCmd = &cobra.Command{
+	Use:   "tui",
+	Short: "Open the unified Zettelkasten TUI",
 	Run: func(cmd *cobra.Command, args []string) {
-		runNavigator()
+		runTUI()
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(navCmd)
+	rootCmd.AddCommand(tuiCmd)
 }
 
 type sessionState int
@@ -63,7 +63,7 @@ type navigatorModel struct {
 	height int
 }
 
-func runNavigator() {
+func runTUI() {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -94,7 +94,7 @@ func runNavigator() {
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error running navigator: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		os.Exit(1)
 	}
 }

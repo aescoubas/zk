@@ -21,8 +21,17 @@ type EmbeddingResponse struct {
 func main() {
 	url := "http://localhost:11434/api/embeddings"
 	model := "nomic-embed-text"
-	
-	content, err := os.ReadFile("zettels/braindump.md")
+
+	notePath := os.Getenv("ZK_DEBUG_NOTE")
+	if len(os.Args) > 1 {
+		notePath = os.Args[1]
+	}
+	if notePath == "" {
+		fmt.Fprintln(os.Stderr, "usage: ZK_DEBUG_NOTE=/path/to/note.md go run debug_embed.go")
+		os.Exit(2)
+	}
+
+	content, err := os.ReadFile(notePath)
 	if err != nil {
 		panic(err)
 	}

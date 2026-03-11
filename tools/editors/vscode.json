@@ -3,7 +3,7 @@
     "glspc.languageServer": {
         "zettelkasten": {
             "command": "zk",
-            "args": ["lsp"],
+            "args": ["lsp", "--dir", "${workspaceFolder}"],
             "filetypes": ["markdown"]
         }
     }

@@ -1,4 +1,3 @@
 .zk/
-bin/zk-go
-bin/zk
-tools/zk-go/zk
+bin/
+__pycache__/

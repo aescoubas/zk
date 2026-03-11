@@ -1,9 +1,67 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# Default install prefix
-PREFIX="${1:-/usr/local}"
+usage() {
+    cat <<EOF
+Usage: ./install.sh [--prefix PATH] [--data-dir PATH]
+
+Options:
+  --prefix PATH    Install prefix for the zk binary and completions (default: $HOME/.local)
+  --data-dir PATH  Persist the Zettelkasten data root to ~/.config/zk/root
+  -h, --help       Show this help message
+
+You can also provide the data directory via ZK_DATA_DIR.
+EOF
+}
+
+PREFIX="$HOME/.local"
+DATA_DIR="${ZK_DATA_DIR:-}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --prefix)
+            if [ $# -lt 2 ]; then
+                echo "Error: --prefix requires a value." >&2
+                exit 1
+            fi
+            PREFIX="$2"
+            shift 2
+            ;;
+        --data-dir)
+            if [ $# -lt 2 ]; then
+                echo "Error: --data-dir requires a value." >&2
+                exit 1
+            fi
+            DATA_DIR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "Error: unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [ "$PREFIX" = "$HOME/.local" ]; then
+                PREFIX="$1"
+                shift
+                continue
+            fi
+            echo "Error: unexpected argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
 BIN_DIR="$PREFIX/bin"
+REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+CONFIG_DIR="$CONFIG_HOME/zk"
+CONFIG_FILE="$CONFIG_DIR/root"
 
 # Ensure bin directory exists
 if [ ! -d "$BIN_DIR" ]; then
@@ -22,91 +80,40 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
-# ---------------------------------------------------------
-# Ollama Setup (Semantic Features)
-# ---------------------------------------------------------
-echo -e "${GREEN}Checking Semantic Search Dependencies (Ollama)...${NC}"
-
-if ! command -v ollama &> /dev/null; then
-    echo "Ollama not found. Installing..."
-    if curl -fsSL https://ollama.com/install.sh | sh; then
-        echo "Ollama installed successfully."
-    else
-        echo "Failed to install Ollama. Semantic features (zk ask/embed) will not work."
-        echo "Please install manually: curl -fsSL https://ollama.com/install.sh | sh"
-        # We don't exit here, just warn, so standard zk functions still work
-    fi
-else
-    echo "Ollama is already installed."
-fi
-
-if command -v ollama &> /dev/null; then
-    # Check if running
-    if ! curl -s localhost:11434 > /dev/null; then
-        echo "Ollama server is not running."
-        # Try systemd first
-        if command -v systemctl &> /dev/null; then
-            echo "Attempting to start via systemctl..."
-            sudo systemctl start ollama || true
-        fi
-        
-        # Check again
-        sleep 2
-        if ! curl -s localhost:11434 > /dev/null; then
-             echo "Starting Ollama in background..."
-             ollama serve &> /dev/null &
-             
-             # Wait loop
-             echo -n "Waiting for Ollama to initialize..."
-             for i in {1..10}; do
-                if curl -s localhost:11434 > /dev/null; then
-                    echo " Done."
-                    break
-                fi
-                echo -n "."
-                sleep 1
-             done
-        fi
-    fi
-
-    # Pull Model if server is up
-    if curl -s localhost:11434 > /dev/null; then
-        echo "Ensuring embedding model 'nomic-embed-text' is available..."
-        ollama pull nomic-embed-text
-    else
-        echo "Warning: Could not start Ollama. You may need to run 'ollama serve' manually."
-    fi
-fi
-# ---------------------------------------------------------
-
-# Kill running instances
-echo "Stopping running 'zk' processes..."
-pkill -x zk || true
-
 # 1. Build
 echo "Building binary from source..."
-cd tools/zk-go
-if go build -tags fts5 -ldflags "-s -w" -o ../../bin/zk ./cmd/zk; then
+mkdir -p "$REPO_ROOT/bin"
+cd "$REPO_ROOT"
+if go build -tags fts5 -ldflags "-s -w" -o "$REPO_ROOT/bin/zk" ./cmd/zk; then
     echo "Build successful."
 else
     echo "Build failed."
     exit 1
 fi
-cd ../..
 
 # 2. Install Binary
 echo "Installing binary to $BIN_DIR/zk..."
-
-install_cmd="cp bin/zk $BIN_DIR/zk"
+TARGET_BIN="$BIN_DIR/zk"
+TEMP_BIN="$BIN_DIR/.zk.tmp.$$"
 
 # Check write permissions
 if [ ! -w "$BIN_DIR" ]; then
     echo "Elevated privileges required to write to $BIN_DIR."
-    sudo $install_cmd
-    sudo chmod 755 "$BIN_DIR/zk"
+    sudo cp "$REPO_ROOT/bin/zk" "$TEMP_BIN"
+    sudo chmod 755 "$TEMP_BIN"
+    sudo mv -f "$TEMP_BIN" "$TARGET_BIN"
 else
-    $install_cmd
-    chmod 755 "$BIN_DIR/zk"
+    cp "$REPO_ROOT/bin/zk" "$TEMP_BIN"
+    chmod 755 "$TEMP_BIN"
+    mv -f "$TEMP_BIN" "$TARGET_BIN"
+fi
+
+if [ -n "$DATA_DIR" ]; then
+    mkdir -p "$CONFIG_DIR"
+    printf '%s\n' "$DATA_DIR" > "$CONFIG_FILE"
+    echo "Configured Zettelkasten data root in $CONFIG_FILE"
+else
+    echo "Set --data-dir or ZK_DATA_DIR during installation, or configure the data repo later via ZK_PATH or $CONFIG_FILE"
 fi
 
 # 3. Install Completions
@@ -117,15 +124,15 @@ install_completion() {
     local shell=$1
     local dir=$2
     local file=$3
+    local zk_cmd="$BIN_DIR/zk"
 
     if [ -d "$dir" ]; then
         echo "Installing $shell completion to $dir/$file..."
-        local cmd="./bin/zk completion $shell"
         
         if [ ! -w "$dir" ]; then
-             sudo sh -c "$cmd > $dir/$file"
+             sudo sh -c "\"$zk_cmd\" completion $shell > \"$dir/$file\""
         else
-             $cmd > "$dir/$file"
+             "$zk_cmd" completion "$shell" > "$dir/$file"
         fi
     fi
 }
@@ -145,3 +152,4 @@ install_completion "fish" "$HOME/.config/fish/completions" "zk.fish"
 
 echo -e "${GREEN}Installation complete!${NC}"
 echo "Run 'zk help' to verify."
+echo "Semantic commands such as 'zk ask' and 'zk embed' require a separately managed Ollama setup."

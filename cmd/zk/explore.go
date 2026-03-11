@@ -12,78 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/escoubas/zk/internal/model"
 	"github.com/escoubas/zk/internal/store"
-	"github.com/spf13/cobra"
 )
-
-var exploreCmd = &cobra.Command{
-	Use:   "explore [note_id]",
-	Short: "Interactive graph explorer",
-	Run: func(cmd *cobra.Command, args []string) {
-		startID := ""
-		if len(args) > 0 {
-			startID = args[0]
-		}
-		runExplore(startID)
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(exploreCmd)
-}
-
-func runExplore(startID string) {
-	absRoot, err := filepath.Abs(rootDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	dbPath := filepath.Join(absRoot, ".zk", "index.db")
-
-	st, err := store.NewStore(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening DB: %v\n", err)
-		os.Exit(1)
-	}
-	defer st.Close()
-
-	// Resolve start note
-	var startNote *model.Note
-	
-	if startID != "" {
-		startNote, err = st.GetNote(startID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Note not found: %s\n", startID)
-		}
-	} else {
-		candidates := []string{"index", "Index", "readme", "README", "000-index", "Home"}
-		for _, id := range candidates {
-			n, err := st.GetNote(id)
-			if err == nil {
-				startNote = n
-				break
-			}
-		}
-	}
-	
-	if startNote == nil {
-		if startID == "" {
-			fmt.Println("No index note found. Opening random note...")
-		}
-		startNote, err = st.GetRandomNote()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting random note: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	m := initializeExploreModel(st, absRoot, startNote)
-
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error running explorer: %v\n", err)
-		os.Exit(1)
-	}
-}
 
 const (
 	focusIncoming = iota
@@ -93,25 +22,25 @@ const (
 )
 
 type exploreModel struct {
-	store    *store.Store
-	root     string
-	
+	store *store.Store
+	root  string
+
 	current *model.Note
 	walk    *walkGraph
-	
+
 	incoming []list.Item
 	outgoing []list.Item
 	similar  []list.Item
-	
+
 	listIn      list.Model
 	listOut     list.Model
 	listSimilar list.Model
 	viewport    viewport.Model
-	
-	focus    int
-	width    int
-	height   int
-	
+
+	focus  int
+	width  int
+	height int
+
 	renderer *glamour.TermRenderer
 }
 
@@ -123,7 +52,7 @@ func initializeExploreModel(st *store.Store, root string, start *model.Note) exp
 		walk:    newWalkGraph(start.ID, start.Title),
 		focus:   focusOutgoing,
 	}
-	
+
 	// Custom Delegate with Gruvbox Styles
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.NormalTitle = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxFg))
@@ -142,7 +71,7 @@ func initializeExploreModel(st *store.Store, root string, start *model.Note) exp
 	m.listIn.Title = "Backlinks"
 	m.listIn.SetShowHelp(false)
 	m.listIn.Styles.Title = lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxAqua)).Bold(true)
-	
+
 	m.listOut = list.New([]list.Item{}, delegate, 0, 0)
 	m.listOut.Title = "Links To"
 	m.listOut.SetShowHelp(false)
@@ -155,7 +84,7 @@ func initializeExploreModel(st *store.Store, root string, start *model.Note) exp
 
 	// Init Viewport
 	m.viewport = viewport.New(0, 0)
-	
+
 	// Init Glamour with Gruvbox Style
 	renderer, _ := glamour.NewTermRenderer(
 		glamour.WithStylesFromJSONBytes([]byte(gruvboxStyle)),
@@ -208,13 +137,13 @@ func (m *exploreModel) loadData() {
 	if err == nil {
 		content = string(contentBytes)
 	}
-	
+
 	rendered, err := m.renderer.Render(content)
 	if err != nil {
 		rendered = content
 	}
-	
-m.viewport.SetContent(rendered)
+
+	m.viewport.SetContent(rendered)
 	m.viewport.GotoTop()
 }
 
@@ -287,7 +216,7 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if i, ok := m.listSimilar.SelectedItem().(similarItem); ok {
 					f, err := os.OpenFile(filepath.Join(m.root, m.current.Path), os.O_APPEND|os.O_WRONLY, 0644)
 					if err == nil {
-						link := fmt.Sprintf("\n- Related: [[%s]]\n", i.note.Title) 
+						link := fmt.Sprintf("\n- Related: [[%s]]\n", i.note.Title)
 						f.WriteString(link)
 						f.Close()
 						m.loadData()
@@ -311,7 +240,7 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		
+
 		// Calculate available width for content by subtracting borders and padding
 		// 3 side columns: 2 chars border each = 6
 		// 1 center column: 2 chars border + 2 chars padding = 4
@@ -320,18 +249,18 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if availableWidth < 0 {
 			availableWidth = 0
 		}
-		
+
 		// Assign ~45% to center, rest divided by 3 for sides (~18% each)
 		centerWidth := int(float64(availableWidth) * 0.45)
 		colWidth := (availableWidth - centerWidth) / 3
-		
+
 		// Recalculate center to absorb rounding errors and fill space
 		centerWidth = availableWidth - (colWidth * 3)
 
 		if centerWidth < 20 {
 			centerWidth = 20
 		}
-		
+
 		// Calculate consistent box height
 		// Screen Height - 5 lines (Footer + Spacing + Margins)
 		boxHeight := msg.Height - 5
@@ -341,11 +270,11 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Lists need to fit inside the box with borders (2 lines)
 		listHeight := boxHeight - 2
-		
+
 		m.listIn.SetSize(colWidth, listHeight)
 		m.listOut.SetSize(colWidth, listHeight)
 		m.listSimilar.SetSize(colWidth, listHeight)
-		
+
 		// Viewport needs to fit inside center box:
 		// Box Height
 		// - 2 lines border
@@ -359,7 +288,7 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.viewport.Width = centerWidth
 		m.viewport.Height = vpHeight
-		
+
 		// Update renderer width with Gruvbox style
 		m.renderer, _ = glamour.NewTermRenderer(
 			glamour.WithStylesFromJSONBytes([]byte(gruvboxStyle)),
@@ -377,7 +306,7 @@ func (m exploreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	} else {
 		m.viewport, cmd = m.viewport.Update(msg)
 	}
-	
+
 	return m, cmd
 }
 
@@ -398,15 +327,15 @@ func (m exploreModel) View() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(GruvboxGray)).
 		Height(boxHeight)
-	
+
 	var inStyle, outStyle, simStyle, centerStyle lipgloss.Style
-	
+
 	if m.focus == focusIncoming {
 		inStyle = activeBorder
 	} else {
 		inStyle = inactiveBorder
 	}
-	
+
 	if m.focus == focusOutgoing {
 		outStyle = activeBorder
 	} else {
@@ -424,19 +353,19 @@ func (m exploreModel) View() string {
 	} else {
 		centerStyle = inactiveBorder.Copy().Padding(0, 1)
 	}
-	
+
 	// Render
 	inView := inStyle.Render(m.listIn.View())
 	outView := outStyle.Render(m.listOut.View())
 	simView := simStyle.Render(m.listSimilar.View())
-	
+
 	// Center Header
 	centerHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(GruvboxYellowBright)).Render(m.current.Title)
 	centerContent := m.viewport.View()
 	centerView := centerStyle.Render(fmt.Sprintf("%s\n\n%s", centerHeader, centerContent))
-	
+
 	content := lipgloss.JoinHorizontal(lipgloss.Top, inView, centerView, outView, simView)
-	
+
 	// Help Footer
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray)).Width(m.width).Align(lipgloss.Center)
 	helpText := "Actions: [Tab] Cycle Focus | [h/l] Nav Cols | [Enter] Select | [e] Edit | [a] Append Link | [Back] Back | [g] Graph | [q] Dashboard"

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -19,7 +20,7 @@ var watchMode bool
 var indexCmd = &cobra.Command{
 	Use:   "index",
 	Short: "Index the Zettelkasten",
-	Long:  `Scans the Zettelkasten directory, parses Markdown files, and updates the SQLite index.`, 
+	Long:  `Scans the Zettelkasten directory, parses Markdown files, and updates the SQLite index.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runIndex(rootDir, watchMode)
 	},
@@ -41,6 +42,14 @@ func runIndex(dir string, watch bool) {
 	fmt.Printf("Database Path:   %s\n", dbPath)
 
 	st, err := store.NewStore(dbPath)
+	var rebuildErr *store.IndexRebuildRequiredError
+	if errors.As(err, &rebuildErr) {
+		fmt.Printf("Rebuilding incompatible index: %s\n", rebuildErr.Reason)
+		if err := store.ResetIndex(dbPath); err != nil {
+			log.Fatalf("Failed to reset incompatible index: %v", err)
+		}
+		st, err = store.NewStore(dbPath)
+	}
 	if err != nil {
 		log.Fatalf("Failed to open store: %v", err)
 	}
@@ -113,8 +122,8 @@ func runIndex(dir string, watch bool) {
 				pruned++
 			}
 		} else if err != nil {
-            fmt.Printf("Error checking %s: %v\n", fullPath, err)
-        }
+			fmt.Printf("Error checking %s: %v\n", fullPath, err)
+		}
 	}
 	if pruned > 0 {
 		fmt.Printf("Pruned %d stale notes.\n", pruned)

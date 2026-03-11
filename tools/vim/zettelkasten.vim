@@ -1,32 +1,57 @@
 " Zettelkasten Vim Integration
-" Source this file in your .vimrc: source /path/to/zettelkasten/tools/vim/zettelkasten.vim
+" Source this file in your .vimrc: source /path/to/zk/tools/vim/zettelkasten.vim
 
-let s:zk_path = getcwd() . '/bin/zk'
+let s:zk_cmd = get(g:, 'zettelkasten_zk_cmd', 'zk')
 
-function! ZkNew()
-    let title = input('Note Title: ')
-    if title != ''
-        " Run in a terminal or shell
-        execute '!' . s:zk_path . ' new ' . shellescape(title)
+function! s:detect_root(path) abort
+    if exists('g:zettelkasten_root') && !empty(g:zettelkasten_root)
+        return fnamemodify(g:zettelkasten_root, ':p')
+    endif
+
+    let l:path = empty(a:path) ? getcwd() : a:path
+    if filereadable(l:path)
+        let l:path = fnamemodify(l:path, ':h')
+    endif
+
+    while 1
+        if isdirectory(l:path . '/.zk')
+            return l:path
+        endif
+        if isdirectory(l:path . '/.git') || filereadable(l:path . '/.git')
+            return l:path
+        endif
+        if isdirectory(l:path . '/zettels')
+            return l:path
+        endif
+
+        let l:parent = fnamemodify(l:path, ':h')
+        if l:parent ==# l:path
+            return getcwd()
+        endif
+        let l:path = l:parent
+    endwhile
+endfunction
+
+function! s:zk_command(args) abort
+    let l:root = s:detect_root(expand('%:p'))
+    return s:zk_cmd . ' --dir ' . shellescape(l:root) . ' ' . a:args
+endfunction
+
+function! ZkNew() abort
+    let l:title = input('Note Title: ')
+    if !empty(l:title)
+        execute '!' . s:zk_command('new ' . shellescape(l:title))
     endif
 endfunction
 
-function! ZkInsertLink()
-    " Call the python script which uses fzf
-    " We use system() to capture the output
-    let link = system(s:zk_path . ' link')
-    
-    " If a link was selected (output is not empty), insert it
-    if link != ''
-        " Remove potential newline characters if the script added them (though we tried to suppress)
-        let link = substitute(link, '\n', '', 'g')
-        execute "normal! a" . link
+function! ZkInsertLink() abort
+    let l:link = system(s:zk_command('link'))
+    let l:link = substitute(l:link, '\n\+$', '', '')
+
+    if !empty(l:link)
+        execute 'normal! a' . l:link
     endif
 endfunction
 
-" Mappings
-" Create new note
 nnoremap <leader>zn :call ZkNew()<CR>
-" Insert link (Ctrl+L in insert mode)
 inoremap <C-l> <C-o>:call ZkInsertLink()<CR>
-

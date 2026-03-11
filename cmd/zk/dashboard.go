@@ -9,72 +9,57 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/escoubas/zk/internal/llm"
 	"github.com/escoubas/zk/internal/model"
 	"github.com/escoubas/zk/internal/store"
-	"github.com/spf13/cobra"
 )
 
-var dashboardCmd = &cobra.Command{
-	Use:   "dashboard",
-	Short: "Open the Zettelkasten interactive dashboard",
-	Run: func(cmd *cobra.Command, args []string) {
-		runNavigator()
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(dashboardCmd)
-}
-
-// runDashboard removed, replaced by runNavigator in navigator.go
-
 type dashboardModel struct {
-	store       *store.Store
-	root        string
-	noteCount   int
-	linkCount   int
-	orphanCount int
-	stubCount   int
-	refCount     int
-	refSummaries []model.RefSummary
-	bibCursor    int
-	allNotes     []*model.Note
+	store         *store.Store
+	root          string
+	noteCount     int
+	linkCount     int
+	orphanCount   int
+	stubCount     int
+	refCount      int
+	refSummaries  []model.RefSummary
+	bibCursor     int
+	allNotes      []*model.Note
 	searchResults []model.SimilarNote
-	topics      []model.TagCount
-	snippet     string
-	cursor      int
-	offset      int
-	quitting    bool
-	width       int
-	height      int
-	
+	topics        []model.TagCount
+	snippet       string
+	cursor        int
+	offset        int
+	quitting      bool
+	width         int
+	height        int
+
 	// Semantic Search
 	searchParams textinput.Model
 	// FTS Search
-	ftsParams    textinput.Model
+	ftsParams textinput.Model
 	// Create Note Input
-	createInput  textinput.Model
-	
+	createInput textinput.Model
+
 	// Navigation State
 	activeColumn int // 0: Stats, 1: Middle, 2: Right
 	middleFocus  int // 0: Semantic Input, 1: FTS Input
 	mode         int // 0: Normal, 1: Insert, 2: DeleteConfirm, 3: CreateNote
-	
+
 	pendingDelete *model.Note // Note to be deleted
 
 	// Search State
-	lastSearchType  int    // focusSemantic or focusFTS
-	lastSearchQuery string 
+	lastSearchType  int // focusSemantic or focusFTS
+	lastSearchQuery string
 
-	isSearching  bool // Are we currently typing in the search bar? (Deprecated/Managed by mode)
-	isResults    bool // Are we displaying search results instead of all notes?
-	showHelp     bool // Show help overlay
-	statusMsg    string // Status message (e.g. "Indexing...")
-	llmClient    *llm.Client
+	isSearching bool   // Are we currently typing in the search bar? (Deprecated/Managed by mode)
+	isResults   bool   // Are we displaying search results instead of all notes?
+	showHelp    bool   // Show help overlay
+	statusMsg   string // Status message (e.g. "Indexing...")
+	llmClient   *llm.Client
 }
 
 func NewDashboardModel(st *store.Store, root string) (dashboardModel, error) {
@@ -189,7 +174,7 @@ func performFullTextSearch(store *store.Store, query string) tea.Cmd {
 		results := make([]model.SimilarNote, len(notes))
 		for i, n := range notes {
 			results[i] = model.SimilarNote{
-				Note: n,
+				Note:  n,
 				Score: 1.0, // Mock score for exact matches
 			}
 		}
@@ -198,15 +183,15 @@ func performFullTextSearch(store *store.Store, query string) tea.Cmd {
 }
 
 const (
-	modeNormal = 0
-	modeInsert = 1
+	modeNormal        = 0
+	modeInsert        = 1
 	modeDeleteConfirm = 2
-	modeCreateNote = 3
-	
+	modeCreateNote    = 3
+
 	colStats  = 0
 	colMiddle = 1
 	colRight  = 2
-	
+
 	focusSemantic = 0
 	focusFTS      = 1
 )
@@ -249,7 +234,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = "Indexing complete."
 		}
-		
+
 		// Refresh list and stats
 		notes, _ := m.store.ListNotes()
 		m.allNotes = notes
@@ -267,12 +252,12 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, performFullTextSearch(m.store, m.lastSearchQuery)
 			}
 		}
-		
+
 		// Clear status after 3 seconds
 		return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 			return clearStatusMsg{}
 		})
-	
+
 	case clearStatusMsg:
 		m.statusMsg = ""
 		return m, nil
@@ -293,22 +278,22 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Refresh list
 						notes, _ := m.store.ListNotes()
 						m.allNotes = notes
-						
+
 						// Refresh stats
 						nc, lc, _ := m.store.GetStats()
 						m.noteCount = nc
 						m.linkCount = lc
-						
+
 						// If we were in search results, re-run the search
 						if m.isResults {
 							m.mode = modeNormal
 							m.pendingDelete = nil
-							
+
 							// Adjust cursor to avoid OOB if possible (heuristic)
 							if m.cursor > 0 {
 								m.cursor--
 							}
-							
+
 							if m.lastSearchType == focusSemantic {
 								return m, performSemanticSearch(m.llmClient, m.store, m.lastSearchQuery)
 							} else {
@@ -319,7 +304,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Reset search state to avoid stale results (only if NOT in results mode, which is handled above)
 						// Actually if we were NOT in results mode, we just stay in all notes.
 						// But if we were, we re-ran search.
-						
+
 						// Adjust cursor for All Notes view
 						if m.cursor >= len(m.allNotes) && m.cursor > 0 {
 							m.cursor--
@@ -398,7 +383,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quitting = true
 				return m, tea.Quit
 			}
-			
+
 			if m.middleFocus == focusSemantic {
 				m.searchParams, cmd = m.searchParams.Update(msg)
 			} else {
@@ -412,11 +397,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
-		
+
 		case "?":
 			m.showHelp = !m.showHelp
 			return m, nil
-		
+
 		case "n":
 			m.mode = modeCreateNote
 			m.createInput.Focus()
@@ -431,7 +416,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.activeColumn < colRight {
 				m.activeColumn++
 			}
-			
+
 		// Vertical Navigation within Columns
 		case "j", "down":
 			if m.activeColumn == colStats {
@@ -448,11 +433,13 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.isResults {
 					listLen = len(m.searchResults)
 				}
-				
+
 				if m.cursor < listLen-1 {
 					m.cursor++
 					listHeight := m.height - 14
-					if listHeight < 1 { listHeight = 1 }
+					if listHeight < 1 {
+						listHeight = 1
+					}
 					if m.cursor >= m.offset+listHeight {
 						m.offset++
 					}
@@ -514,7 +501,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.offset = 0
 				m.cursor = 0
 			}
-		
+
 		// Delete Note
 		case "d", "delete":
 			if m.activeColumn == colRight {
@@ -549,7 +536,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						note = m.allNotes[m.cursor]
 					}
 				}
-				
+
 				if note != nil {
 					return m, openEditor(m.root, note.Path)
 				}
@@ -619,7 +606,7 @@ func (m dashboardModel) View() string {
 	selectedStyle := lipgloss.NewStyle().PaddingLeft(0).Foreground(lipgloss.Color(GruvboxOrangeBright)).SetString("> ")
 	statLabel := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray))
 	statValue := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxPurpleBright)).Bold(true)
-	
+
 	snippetStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(GruvboxGrayBright)).
 		Italic(true).
@@ -687,14 +674,14 @@ func (m dashboardModel) View() string {
 	if len(m.topics) == 0 {
 		topicsContent = "No tags found"
 	}
-	
+
 	// Input Styles
 	activeInputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxOrangeBright))
 	inactiveInputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(GruvboxGray))
-	
+
 	semanticHeader := "Semantic Search"
 	ftsHeader := "Full Text Search"
-	
+
 	if m.activeColumn == colMiddle {
 		if m.middleFocus == focusSemantic {
 			semanticHeader = activeInputStyle.Render("> " + semanticHeader)
@@ -710,10 +697,10 @@ func (m dashboardModel) View() string {
 
 	searchBar := m.searchParams.View()
 	ftsBar := m.ftsParams.View()
-	
+
 	topicsBox := middleBoxStyle.Render(
-		lipgloss.JoinVertical(lipgloss.Left, 
-			headerStyle.Render("Top Topics"), 
+		lipgloss.JoinVertical(lipgloss.Left,
+			headerStyle.Render("Top Topics"),
 			topicsContent,
 			"\n",
 			semanticHeader,
@@ -730,7 +717,7 @@ func (m dashboardModel) View() string {
 	if listHeight < 1 {
 		listHeight = 1
 	}
-	
+
 	listLen := 0
 	headerTitle := "All Notes"
 	if m.isResults {
@@ -760,13 +747,13 @@ func (m dashboardModel) View() string {
 			cleanSummary := strings.ReplaceAll(strings.TrimSpace(n.Summary), "\n", " ")
 			summary = cleanSummary
 		}
-		
+
 		// Build line with Title and Summary
 		avail := colWidth - 4 // Padding/Border safety
 		if avail < 10 {
 			avail = 10
 		}
-		
+
 		line := title
 		if len(title) < avail && summary != "" {
 			rem := avail - len(title) - 3
@@ -831,14 +818,14 @@ func (m dashboardModel) View() string {
 		"\n",
 		help,
 	)
-	
+
 	if m.showHelp {
 		helpBoxStyle := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(GruvboxYellow)).
 			Padding(1, 2).
 			Width(60)
-		
+
 		helpContent := `
       Available Commands
 

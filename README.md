@@ -1,107 +1,89 @@
-# Zettelkasten
+# zk
 
-## Principles
+`zk` is the Go CLI, TUI, LSP, and MCP server for a Markdown-based zettelkasten. The note content now lives in a separate data repository such as `zettelkasten-data`.
 
-> "From the moment I understood the weakness of my flesh, it disgusted me. I craved the strength and certainty of steel. I aspired to the purity of the Blessed Machine."
+## Repository Layout
 
-- **Blissful Amnesia**: Minimize the information you have to keep in "cache" by externalizing your thought processes. Once you are confident the data is stored and retrievable, you are free to forget.
-- **Joyful Exploration**: The organization should mirror your mental processes and facilitate the exploration of your own mind.
+- `cmd/zk/`: CLI entrypoints and TUI models
+- `internal/`: parser, store, LSP, MCP, SRS, and embedding internals
+- `tools/editors/`: editor integration snippets
+- `tools/vim/`: classic Vim helper
+- `ARCHITECTURE/`: ADRs for significant design decisions
 
-## Guidelines
+## Build And Test
 
-### What a Zettelkasten Is
-- **Atomic**: One Zettel (note) should contain one atomic idea.
-- **Connected**: Each idea should be embedded in a latticework of references (`[[WikiLinks]]`).
-- **Personal**: It is not meant to be used by someone else.
-- **Flat**: We avoid deep directory hierarchies in favor of connections.
-- **Concise**: One Zettel should ideally span one screen size (no scrolling).
-
-### Workflow
-1.  **Read/Consume**: Note passages or thoughts in `references/` or temporary notes.
-2.  **Synthesize**: Write **permanent atomic notes** (`zettels/`) and link them to the source and other concepts.
-3.  **Refine**: Periodically check for "orphan" notes and connect them.
-
----
-
-## System Manual
-
-This repository has been overhauled to support this atomic workflow with custom tooling.
-
-### 1. Directory Structure
-
-- **`zettels/`**: All active atomic notes live here (flat structure).
-- **`archive/`**: Legacy wikis and documents (`legacy_doc/`).
-- **`references/`**: Source materials (`bibliographic_notes/`).
-- **`bin/`**: Custom CLI tools (`zk`, `lint`, `sync`, `build_graph.py`).
-- **`tools/`**: Helper scripts and templates.
-- **`ARCHITECTURE/`**: Architectural Decision Records (ADRs). Keep these up to date when making significant changes.
-
-### 2. The `zk` CLI Tool
-
-The `zk` tool is a high-performance Go application that manages your Zettelkasten.
-
-**Building from Source:**
-You need Go installed.
 ```bash
-cd tools/zk-go
-go build -o ../../bin/zk ./cmd/zk
+go build -tags fts5 -o bin/zk ./cmd/zk
+go test -tags fts5 ./...
 ```
 
-**Installation:**
-Use the provided script to build and install to your system (defaults to `~/.local/bin`):
+## Install
+
+Install the binary and shell completions into `~/.local` by default:
+
 ```bash
-./install.sh
+./install.sh --data-dir /path/to/zettelkasten-data
 ```
-The script also installs shell completions.
 
-**Usage:**
-The `zk` binary is your primary interface.
-- **Navigator**: Run `zk` (no args) to open the interactive dashboard.
-- **Create a new note**:
-`zk dump`
--------------
-Creates a file `zettels/YYYYMMDDHHMM-my-new-idea.md` and opens it.
+The data root is resolved in this order:
 
-- **Search and Link**:
-  ```bash
-  ./bin/zk link
-  ```
-  Fuzzy searches notes and outputs a `[[WikiLink]]`. Useful for inserting links in your editor.
+1. `--dir`
+2. `ZK_PATH`
+3. `~/.config/zk/root`
+4. current working directory, but only when it contains `zettels/`
 
-- **Random Note**:
-  ```bash
-  ./bin/zk random
-  ```
-  Opens a random note to spark rediscovery.
+If you do not set `--data-dir` or `ZK_DATA_DIR` during installation, configure the data repo later with either `ZK_PATH` or `~/.config/zk/root`.
 
-- **Stale Notes**:
-  ```bash
-  ./bin/zk stale
-  ```
-  Lists notes untouched for >1 year.
+For a system-wide install, pass both the install prefix and the data root explicitly:
 
-### 3. Vim Integration
+```bash
+./install.sh --prefix /usr/local --data-dir /path/to/zettelkasten-data
+```
 
-Source `tools/vim/zettelkasten.vim` in your `.vimrc`:
+## Common Usage
+
+```bash
+zk --dir /path/to/zettelkasten-data tui
+zk --dir /path/to/zettelkasten-data index
+zk --dir /path/to/zettelkasten-data lint
+zk --dir /path/to/zettelkasten-data graph
+zk --dir /path/to/zettelkasten-data list
+zk --dir /path/to/zettelkasten-data new "My Note"
+zk --dir /path/to/zettelkasten-data lsp
+zk --dir /path/to/zettelkasten-data mcp
+```
+
+Once `ZK_PATH` or `~/.config/zk/root` is set, the `--dir` flag becomes optional.
+
+The interactive terminal UI is launched explicitly with `zk tui`. Running `zk` with no subcommand shows help.
+
+If `zk` reports that the index is incompatible, run:
+
+```bash
+zk index
+```
+
+The command will rebuild the disposable `.zk/index.db` automatically when needed.
+
+## Editor Integration
+
+Neovim and VS Code snippets live under `tools/editors/`. They invoke `zk` from `PATH` and pass the detected workspace root to the language server.
+
+For classic Vim:
+
 ```vim
-source /path/to/repo/tools/vim/zettelkasten.vim
+source /path/to/zk/tools/vim/zettelkasten.vim
+let g:zettelkasten_zk_cmd = 'zk'
+" Optional override when root detection is not enough:
+" let g:zettelkasten_root = '/path/to/zettelkasten-data'
 ```
 
-- **`<Leader>zn`**: Create a new note.
-- **`<Ctrl>l`** (Insert Mode): Fuzzy search and insert a link.
+## Runtime State
 
-### 4. Visualization & Quality
+- `.zk/index.db` inside the data root is a derived, rebuildable index.
+- Local SRS state lives under `XDG_STATE_HOME/zk/...` or `~/.local/state/zk/...`.
+- Bibliography entries live in `bibliography.json` in the data repo so they move with the notes.
 
-- **Graph View**:
-  Run `./bin/build_graph.py` to generate `graph.html`. Open `graph.html` in your browser to see the network.
-  
-- **Linter**:
-  Run `./bin/lint` to find:
-  - Broken links (dead targets).
-  - Orphan notes (zero incoming links).
-  
-- **Sync**:
-  Run `./bin/sync` to pull, commit, and push.
+## Companion Data Repository
 
-- **Pre-commit Hook**:
-  Run `./bin/install_hooks` to prevent committing if the linter fails (optional).
+The companion data repo contains `zettels/`, `projects/`, `kanban/`, `archive/`, `bibliography.json`, and optional repo-local shell helpers such as `bin/sync`. `zk` reads and writes `.zk/index.db` inside that data root and now provides the lint and graph-generation commands directly.

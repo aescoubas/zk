@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -16,184 +17,385 @@ import (
 	_ "github.com/mattn/go-sqlite3" // Import for side effects
 )
 
-const schema = `
-CREATE TABLE IF NOT EXISTS notes (
-	id TEXT PRIMARY KEY,
-	path TEXT NOT NULL,
-	title TEXT,
-	hash TEXT,
-	mod_time DATETIME
-);
-
-CREATE TABLE IF NOT EXISTS links (
-	source_id TEXT,
-	target_id TEXT,
-	display_text TEXT,
-	PRIMARY KEY (source_id, target_id),
-	FOREIGN KEY(source_id) REFERENCES notes(id)
-);
-
-CREATE TABLE IF NOT EXISTS tags (
-	note_id TEXT,
-	tag TEXT,
-	PRIMARY KEY (note_id, tag),
-	FOREIGN KEY(note_id) REFERENCES notes(id)
-);
-
--- FTS5 Virtual Table for Full-Text Search
-CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id UNINDEXED, title, content);
-
--- Triggers to keep FTS index in sync with notes table
-CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
-  INSERT INTO notes_fts(id, title, content) VALUES (new.id, new.title, ''); -- Content updated separately? Or need to store content in DB?
-END;
-
-CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
-  DELETE FROM notes_fts WHERE id = old.id;
-END;
-
-CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
-  DELETE FROM notes_fts WHERE id = old.id;
-  INSERT INTO notes_fts(id, title, content) VALUES (new.id, new.title, ''); -- Logic to update content needed
-END;
-`
-
-// Note: FTS content update via triggers is tricky if content isn't in the main table.
-// For a shadow index, we might just insert directly into both or use the 'notes' table to store content if we want it self-contained.
-// Given "Shadow Index", it might be better to manage FTS inserts explicitly in Go code rather than complex triggers if 'content' isn't in 'notes'.
-// I'll adjust the schema to simpler tables and manage FTS in code for clarity.
-
-const schemaSimple = `
-CREATE TABLE IF NOT EXISTS notes (
-	id TEXT PRIMARY KEY,
-	path TEXT NOT NULL,
-	title TEXT,
-	summary TEXT,
-	hash TEXT,
-	mod_time INTEGER
-);
-
-CREATE TABLE IF NOT EXISTS links (
-	source_id TEXT,
-	target_id TEXT,
-	display_text TEXT,
-	PRIMARY KEY (source_id, target_id)
-);
-
-CREATE TABLE IF NOT EXISTS tags (
-	note_id TEXT,
-	tag TEXT,
-	PRIMARY KEY (note_id, tag)
-);
-
-CREATE TABLE IF NOT EXISTS srs_items (
-	note_id TEXT PRIMARY KEY,
-	next_review INTEGER,
-	interval REAL,
-	ease_factor REAL,
-	repetitions INTEGER
-);
-
-CREATE TABLE IF NOT EXISTS embeddings (
-	note_id TEXT PRIMARY KEY,
-	vector BLOB,
-	model TEXT
-);
-
-CREATE TABLE IF NOT EXISTS refs (
-	id TEXT PRIMARY KEY,
-	type TEXT,
-	title TEXT,
-	author TEXT,
-	year TEXT,
-	url TEXT,
-	description TEXT
-);
-
-CREATE TABLE IF NOT EXISTS citations (
-	note_id TEXT,
-	ref_id TEXT,
-	PRIMARY KEY (note_id, ref_id)
-);
-`
-
 // Store manages the SQLite database.
 type Store struct {
-	db     *sql.DB
-	hasFTS bool
+	db               *sql.DB
+	stateDB          *sql.DB
+	root             string
+	indexPath        string
+	statePath        string
+	bibliographyPath string
+	hasFTS           bool
 }
 
 // NewStore initializes the database connection and schema.
 func NewStore(dbPath string) (*Store, error) {
+	absDBPath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve database path: %w", err)
+	}
+
+	root := filepath.Dir(filepath.Dir(absDBPath))
+	statePath, err := stateDBPathForRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve state database path: %w", err)
+	}
+
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(absDBPath), 0755); err != nil {
 		return nil, fmt.Errorf("failed to create db directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite3", absDBPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		db.Close()
+		return nil, &IndexRebuildRequiredError{Path: absDBPath, Reason: err.Error()}
 	}
 
-	s := &Store{db: db}
-	if err := s.initSchema(); err != nil {
+	s := &Store{
+		db:               db,
+		root:             root,
+		indexPath:        absDBPath,
+		statePath:        statePath,
+		bibliographyPath: bibliographyPathForRoot(root),
+	}
+
+	if err := s.migrateLegacyPortableData(); err != nil {
 		db.Close()
 		return nil, err
 	}
-	s.initFTS()
+
+	features := indexFeatures{FTS5: probeFTS5Support()}
+	if err := s.initIndexSchema(features); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return s, nil
 }
 
-func (s *Store) initFTS() {
-	_, err := s.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id UNINDEXED, title, content)`)
+func probeFTS5Support() bool {
+	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
-		log.Printf("FTS5 not available (full-text search disabled): %v", err)
-		s.hasFTS = false
-		return
+		return false
 	}
-	// Verify FTS5 actually works — the CREATE may be a no-op if the table
-	// already exists from a session that had FTS5, but the current binary
-	// may lack the module.
-	_, err = s.db.Exec(`SELECT count(*) FROM notes_fts LIMIT 1`)
-	if err != nil {
-		log.Printf("FTS5 table exists but module unavailable (full-text search disabled): %v", err)
-		s.hasFTS = false
-		return
+	defer db.Close()
+
+	if err := db.Ping(); err != nil {
+		return false
 	}
-	s.hasFTS = true
+	if _, err := db.Exec(`CREATE VIRTUAL TABLE fts_probe USING fts5(content)`); err != nil {
+		return false
+	}
+	return true
 }
 
-func (s *Store) initSchema() error {
-	_, err := s.db.Exec(schemaSimple)
+func (s *Store) initIndexSchema(features indexFeatures) error {
+	userTables, err := listUserTables(s.db)
 	if err != nil {
-		return fmt.Errorf("failed to execute schema: %w", err)
+		return fmt.Errorf("failed to inspect index schema: %w", err)
 	}
 
-	// Migration: Add summary column if it doesn't exist
-	// Ignore error if column already exists (SQLite doesn't support IF NOT EXISTS for ADD COLUMN easily in one statement without checking)
-	// Simple hack: Try to add it, ignore "duplicate column name" error.
-	_, err = s.db.Exec(`ALTER TABLE notes ADD COLUMN summary TEXT`)
-	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		// Only return error if it's NOT about the column existing
-		// Check for different SQLite error messages variants just in case, but "duplicate column name" is standard.
-		// Actually, standard sql package might not return the text string reliably across drivers/versions.
-		// Let's assume if schemaSimple ran, table exists.
-		// If this fails, it might be serious, or it might be "column exists".
-		// Let's log it or ignore it? 
-		// Safer: Check pragma.
+	if len(userTables) == 0 {
+		return s.bootstrapIndexSchema(features)
 	}
-	
+	if !userTables[metaTableName] {
+		return &IndexRebuildRequiredError{Path: s.indexPath, Reason: "legacy index schema has no version metadata"}
+	}
+
+	version, err := readMetaInt(s.db, "schema_version")
+	if err != nil {
+		return &IndexRebuildRequiredError{Path: s.indexPath, Reason: "index schema version metadata is unreadable"}
+	}
+	if version != indexSchemaVersion {
+		return &IndexRebuildRequiredError{Path: s.indexPath, Reason: fmt.Sprintf("schema version %d does not match expected version %d", version, indexSchemaVersion)}
+	}
+
+	storedFeatures, err := readIndexFeatures(s.db)
+	if err != nil {
+		return &IndexRebuildRequiredError{Path: s.indexPath, Reason: "index feature metadata is unreadable"}
+	}
+	if storedFeatures != features {
+		return &IndexRebuildRequiredError{Path: s.indexPath, Reason: fmt.Sprintf("stored feature flags %+v do not match current binary %+v", storedFeatures, features)}
+	}
+
+	for _, required := range []string{"notes", "links", "tags", "embeddings", "citations"} {
+		if !userTables[required] {
+			return &IndexRebuildRequiredError{Path: s.indexPath, Reason: fmt.Sprintf("required table %q is missing", required)}
+		}
+	}
+	if userTables["srs_items"] {
+		return &IndexRebuildRequiredError{Path: s.indexPath, Reason: "legacy SRS data still lives in index.db"}
+	}
+	if userTables["refs"] {
+		return &IndexRebuildRequiredError{Path: s.indexPath, Reason: "legacy bibliography data still lives in index.db"}
+	}
+	if features.FTS5 {
+		if !userTables["notes_fts"] {
+			return &IndexRebuildRequiredError{Path: s.indexPath, Reason: "FTS5 index is missing"}
+		}
+		if _, err := s.db.Exec(`SELECT count(*) FROM notes_fts LIMIT 1`); err != nil {
+			return &IndexRebuildRequiredError{Path: s.indexPath, Reason: fmt.Sprintf("FTS5 index is unreadable: %v", err)}
+		}
+	}
+
+	s.hasFTS = features.FTS5
+	return nil
+}
+
+func (s *Store) bootstrapIndexSchema(features indexFeatures) error {
+	if _, err := s.db.Exec(indexSchema); err != nil {
+		return fmt.Errorf("failed to execute schema: %w", err)
+	}
+	if err := writeMetaValue(s.db, "schema_version", fmt.Sprintf("%d", indexSchemaVersion)); err != nil {
+		return err
+	}
+	if err := writeIndexFeatures(s.db, features); err != nil {
+		return err
+	}
+	if features.FTS5 {
+		if _, err := s.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id UNINDEXED, title, content)`); err != nil {
+			return fmt.Errorf("failed to create FTS5 table: %w", err)
+		}
+	}
+	s.hasFTS = features.FTS5
+	return nil
+}
+
+func (s *Store) migrateLegacyPortableData() error {
+	userTables, err := listUserTables(s.db)
+	if err != nil {
+		return err
+	}
+
+	if userTables["srs_items"] {
+		if err := s.migrateLegacySRS(); err != nil {
+			return fmt.Errorf("failed to migrate legacy SRS state: %w", err)
+		}
+	}
+	if userTables["refs"] {
+		if err := s.migrateLegacyBibliography(); err != nil {
+			return fmt.Errorf("failed to migrate legacy bibliography: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) migrateLegacySRS() error {
+	rows, err := s.db.Query(`SELECT note_id, next_review, interval, ease_factor, repetitions FROM srs_items`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	stateDB, err := s.ensureStateDB()
+	if err != nil {
+		return err
+	}
+
+	stmt, err := stateDB.Prepare(`
+		INSERT INTO srs_items (note_id, next_review, interval, ease_factor, repetitions)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(note_id) DO NOTHING
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for rows.Next() {
+		var item model.SRSItem
+		var nextReview int64
+		if err := rows.Scan(&item.NoteID, &nextReview, &item.Interval, &item.EaseFactor, &item.Repetitions); err != nil {
+			return err
+		}
+		if _, err := stmt.Exec(item.NoteID, nextReview, item.Interval, item.EaseFactor, item.Repetitions); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (s *Store) migrateLegacyBibliography() error {
+	rows, err := s.db.Query(`SELECT id, type, title, author, year, url, description FROM refs`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	file, err := s.loadBibliography()
+	if err != nil {
+		return err
+	}
+
+	existing := make(map[string]model.Ref, len(file.Refs))
+	for _, ref := range file.Refs {
+		existing[ref.ID] = ref
+	}
+	changed := false
+
+	for rows.Next() {
+		var ref model.Ref
+		var refType, author, year, url, desc sql.NullString
+		if err := rows.Scan(&ref.ID, &refType, &ref.Title, &author, &year, &url, &desc); err != nil {
+			return err
+		}
+		if refType.Valid {
+			ref.Type = refType.String
+		}
+		if author.Valid {
+			ref.Author = author.String
+		}
+		if year.Valid {
+			ref.Year = year.String
+		}
+		if url.Valid {
+			ref.URL = url.String
+		}
+		if desc.Valid {
+			ref.Description = desc.String
+		}
+		if _, ok := existing[ref.ID]; !ok {
+			file.Refs = append(file.Refs, ref)
+			changed = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if !changed {
+		if _, err := os.Stat(s.bibliographyPath); errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+	}
+
+	return s.saveBibliography(file)
+}
+
+func (s *Store) ensureStateDB() (*sql.DB, error) {
+	if s.stateDB != nil {
+		return s.stateDB, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(s.statePath), 0755); err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open("sqlite3", s.statePath)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(stateSchema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := writeMetaValue(db, "schema_version", fmt.Sprintf("%d", stateSchemaVersion)); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	s.stateDB = db
+	return s.stateDB, nil
+}
+
+func listUserTables(db *sql.DB) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tables := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables[name] = true
+	}
+	return tables, rows.Err()
+}
+
+func readMetaInt(db *sql.DB, key string) (int, error) {
+	var raw string
+	if err := db.QueryRow(`SELECT value FROM zk_meta WHERE key = ?`, key).Scan(&raw); err != nil {
+		return 0, err
+	}
+	var value int
+	if _, err := fmt.Sscanf(raw, "%d", &value); err != nil {
+		return 0, err
+	}
+	return value, nil
+}
+
+func writeMetaValue(db *sql.DB, key, value string) error {
+	_, err := db.Exec(`
+		INSERT INTO zk_meta (key, value)
+		VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, key, value)
+	return err
+}
+
+func readIndexFeatures(db *sql.DB) (indexFeatures, error) {
+	var raw string
+	if err := db.QueryRow(`SELECT value FROM zk_meta WHERE key = 'features'`).Scan(&raw); err != nil {
+		return indexFeatures{}, err
+	}
+	var features indexFeatures
+	if err := json.Unmarshal([]byte(raw), &features); err != nil {
+		return indexFeatures{}, err
+	}
+	return features, nil
+}
+
+func writeIndexFeatures(db *sql.DB, features indexFeatures) error {
+	data, err := json.Marshal(features)
+	if err != nil {
+		return err
+	}
+	return writeMetaValue(db, "features", string(data))
+}
+
+func ResetIndex(dbPath string) error {
+	for _, path := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	return nil
 }
 
 // Close closes the database connection.
 func (s *Store) Close() error {
-	return s.db.Close()
+	var errs []error
+	if s.db != nil {
+		if err := s.db.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if s.stateDB != nil {
+		if err := s.stateDB.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return errs[0]
+}
+
+func (s *Store) HasFTS() bool {
+	return s.hasFTS
 }
 
 // IndexNote inserts or updates a note and its relations.
@@ -538,7 +740,7 @@ func (s *Store) DeleteNote(id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete outgoing links: %w", err)
 	}
-	
+
 	// Delete from FTS (if available)
 	if s.hasFTS {
 		_, err = tx.Exec("DELETE FROM notes_fts WHERE id = ?", id)
@@ -553,27 +755,38 @@ func (s *Store) DeleteNote(id string) error {
 		return fmt.Errorf("failed to delete note: %w", err)
 	}
 
-	// Delete from SRS
-	_, err = tx.Exec("DELETE FROM srs_items WHERE note_id = ?", id)
-	if err != nil {
-		return fmt.Errorf("failed to delete srs item: %w", err)
-	}
-
 	// Delete from citations
 	_, err = tx.Exec("DELETE FROM citations WHERE note_id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete citations: %w", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	stateDB, err := s.ensureStateDB()
+	if err != nil {
+		return err
+	}
+	if _, err := stateDB.Exec("DELETE FROM srs_items WHERE note_id = ?", id); err != nil {
+		return fmt.Errorf("failed to delete srs item: %w", err)
+	}
+
+	return nil
 }
 
 // GetSRSItem retrieves the SRS state for a note.
 func (s *Store) GetSRSItem(noteID string) (*model.SRSItem, error) {
-	row := s.db.QueryRow(`SELECT note_id, next_review, interval, ease_factor, repetitions FROM srs_items WHERE note_id = ?`, noteID)
+	stateDB, err := s.ensureStateDB()
+	if err != nil {
+		return nil, err
+	}
+
+	row := stateDB.QueryRow(`SELECT note_id, next_review, interval, ease_factor, repetitions FROM srs_items WHERE note_id = ?`, noteID)
 	var item model.SRSItem
 	var nextReview int64
-	err := row.Scan(&item.NoteID, &nextReview, &item.Interval, &item.EaseFactor, &item.Repetitions)
+	err = row.Scan(&item.NoteID, &nextReview, &item.Interval, &item.EaseFactor, &item.Repetitions)
 	if err == sql.ErrNoRows {
 		return nil, nil // Not found is okay, means new item
 	}
@@ -586,7 +799,12 @@ func (s *Store) GetSRSItem(noteID string) (*model.SRSItem, error) {
 
 // SaveSRSItem inserts or updates an SRS item.
 func (s *Store) SaveSRSItem(item *model.SRSItem) error {
-	_, err := s.db.Exec(`
+	stateDB, err := s.ensureStateDB()
+	if err != nil {
+		return err
+	}
+
+	_, err = stateDB.Exec(`
 		INSERT INTO srs_items (note_id, next_review, interval, ease_factor, repetitions)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(note_id) DO UPDATE SET
@@ -600,22 +818,18 @@ func (s *Store) SaveSRSItem(item *model.SRSItem) error {
 
 // GetDueReviews retrieves notes that are due for review.
 func (s *Store) GetDueReviews() ([]*model.Note, error) {
+	stateDB, err := s.ensureStateDB()
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().Unix()
-	// Get notes where next_review <= now OR next_review IS NULL (if we want to include unreviewed notes?)
-	// For now, let's only return items that exist in SRS table and are due.
-	// Users can add notes to SRS manually or we can have a policy to auto-add.
-	// Roadmap says: "based on note importance and freshness".
-	// For this iteration, let's stick to items already in SRS or explicitly "stale but important".
-	
-	// Let's just return what is in SRS table and due.
-	query := `
-		SELECT n.id, n.path, n.title, n.summary, n.hash, n.mod_time
-		FROM notes n
-		JOIN srs_items s ON n.id = s.note_id
-		WHERE s.next_review <= ?
-		ORDER BY s.next_review ASC
-	`
-	rows, err := s.db.Query(query, now)
+	rows, err := stateDB.Query(`
+		SELECT note_id
+		FROM srs_items
+		WHERE next_review <= ?
+		ORDER BY next_review ASC
+	`, now)
 	if err != nil {
 		return nil, err
 	}
@@ -623,17 +837,22 @@ func (s *Store) GetDueReviews() ([]*model.Note, error) {
 
 	var notes []*model.Note
 	for rows.Next() {
-		var n model.Note
-		var unixTime int64
-		var summary sql.NullString
-		if err := rows.Scan(&n.ID, &n.Path, &n.Title, &summary, &n.Hash, &unixTime); err != nil {
+		var noteID string
+		if err := rows.Scan(&noteID); err != nil {
 			return nil, err
 		}
-		if summary.Valid {
-			n.Summary = summary.String
+
+		n, err := s.GetNote(noteID)
+		if errors.Is(err, sql.ErrNoRows) {
+			if _, cleanupErr := stateDB.Exec(`DELETE FROM srs_items WHERE note_id = ?`, noteID); cleanupErr != nil {
+				log.Printf("Failed to prune orphaned SRS item %s: %v", noteID, cleanupErr)
+			}
+			continue
 		}
-		n.ModTime = time.Unix(unixTime, 0)
-		notes = append(notes, &n)
+		if err != nil {
+			return nil, err
+		}
+		notes = append(notes, n)
 	}
 	return notes, nil
 }
@@ -774,12 +993,12 @@ func (s *Store) FindSimilar(targetID string, limit int) ([]model.SimilarNote, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to get target embedding: %w", err)
 	}
-    if targetEmb == nil {
-        return nil, nil // No embedding, no similar notes
-    }
+	if targetEmb == nil {
+		return nil, nil // No embedding, no similar notes
+	}
 
 	// 2. Get All Embeddings
-	// Optimization: In a real DB, we'd use a vector index (sqlite-vss). 
+	// Optimization: In a real DB, we'd use a vector index (sqlite-vss).
 	// Here we load all (slow for large DBs, fine for personal ZK).
 	allEmbs, err := s.GetAllEmbeddings()
 	if err != nil {
@@ -793,15 +1012,15 @@ func (s *Store) FindSimilar(targetID string, limit int) ([]model.SimilarNote, er
 			continue
 		}
 		score := llm.CosineSimilarity(targetEmb.Vector, e.Vector)
-		
+
 		// Only keep relevant matches? Or return top N?
 		// Let's filter slightly to avoid garbage
 		if score > 0.3 { // Threshold?
-			// We need the Note object. 
+			// We need the Note object.
 			// Performance: Getting note for every match is slow.
 			// Better: Sort first, then fetch top N notes.
 			matches = append(matches, model.SimilarNote{
-				Note: &model.Note{ID: e.NoteID}, // Temporary placeholder
+				Note:  &model.Note{ID: e.NoteID}, // Temporary placeholder
 				Score: score,
 			})
 		}
@@ -842,10 +1061,10 @@ func (s *Store) SearchByVector(queryVector []float64, limit int) ([]model.Simila
 	var matches []model.SimilarNote
 	for _, e := range allEmbs {
 		score := llm.CosineSimilarity(queryVector, e.Vector)
-		
+
 		if score > 0.15 { // Lower threshold for search queries as they are short/imperfect
 			matches = append(matches, model.SimilarNote{
-				Note: &model.Note{ID: e.NoteID},
+				Note:  &model.Note{ID: e.NoteID},
 				Score: score,
 			})
 		}
@@ -916,112 +1135,122 @@ func (s *Store) GetStubCount() (int, error) {
 
 // UpsertRef inserts or updates a bibliographic reference.
 func (s *Store) UpsertRef(r *model.Ref) error {
-	_, err := s.db.Exec(`
-		INSERT INTO refs (id, type, title, author, year, url, description)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			type=excluded.type,
-			title=excluded.title,
-			author=excluded.author,
-			year=excluded.year,
-			url=excluded.url,
-			description=excluded.description
-	`, r.ID, r.Type, r.Title, r.Author, r.Year, r.URL, r.Description)
-	return err
+	file, err := s.loadBibliography()
+	if err != nil {
+		return err
+	}
+
+	replaced := false
+	for i := range file.Refs {
+		if file.Refs[i].ID == r.ID {
+			file.Refs[i] = *r
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		file.Refs = append(file.Refs, *r)
+	}
+	return s.saveBibliography(file)
 }
 
 // GetRef retrieves a reference by ID.
 func (s *Store) GetRef(id string) (*model.Ref, error) {
-	row := s.db.QueryRow(`SELECT id, type, title, author, year, url, description FROM refs WHERE id = ?`, id)
-	var r model.Ref
-	var refType, author, year, url, desc sql.NullString
-	err := row.Scan(&r.ID, &refType, &r.Title, &author, &year, &url, &desc)
+	file, err := s.loadBibliography()
 	if err != nil {
 		return nil, err
 	}
-	if refType.Valid {
-		r.Type = refType.String
+	for _, ref := range file.Refs {
+		if ref.ID == id {
+			copy := ref
+			return &copy, nil
+		}
 	}
-	if author.Valid {
-		r.Author = author.String
-	}
-	if year.Valid {
-		r.Year = year.String
-	}
-	if url.Valid {
-		r.URL = url.String
-	}
-	if desc.Valid {
-		r.Description = desc.String
-	}
-	return &r, nil
+	return nil, sql.ErrNoRows
 }
 
 // DeleteRef removes a reference and its citations.
 func (s *Store) DeleteRef(id string) error {
-	tx, err := s.db.Begin()
+	file, err := s.loadBibliography()
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
 
-	_, err = tx.Exec("DELETE FROM citations WHERE ref_id = ?", id)
-	if err != nil {
+	filtered := file.Refs[:0]
+	found := false
+	for _, ref := range file.Refs {
+		if ref.ID == id {
+			found = true
+			continue
+		}
+		filtered = append(filtered, ref)
+	}
+	if !found {
+		return sql.ErrNoRows
+	}
+	file.Refs = filtered
+	if err := s.saveBibliography(file); err != nil {
+		return err
+	}
+
+	if _, err := s.db.Exec("DELETE FROM citations WHERE ref_id = ?", id); err != nil {
 		return fmt.Errorf("failed to delete citations for ref: %w", err)
 	}
-	_, err = tx.Exec("DELETE FROM refs WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("failed to delete ref: %w", err)
-	}
-	return tx.Commit()
+	return nil
 }
 
 // ListRefSummaries retrieves all references with citation counts.
 func (s *Store) ListRefSummaries() ([]model.RefSummary, error) {
-	query := `
-		SELECT r.id, r.type, r.title, r.author, r.year, r.url, r.description,
-		       (SELECT COUNT(*) FROM citations c WHERE c.ref_id = r.id) AS cite_count
-		FROM refs r
-		ORDER BY cite_count DESC, r.title ASC
-	`
-	rows, err := s.db.Query(query)
+	file, err := s.loadBibliography()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.db.Query(`SELECT ref_id, count(*) FROM citations GROUP BY ref_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var summaries []model.RefSummary
+	counts := make(map[string]int)
 	for rows.Next() {
-		var rs model.RefSummary
-		var refType, author, year, url, desc sql.NullString
-		if err := rows.Scan(&rs.Ref.ID, &refType, &rs.Ref.Title, &author, &year, &url, &desc, &rs.Citations); err != nil {
+		var refID string
+		var count int
+		if err := rows.Scan(&refID, &count); err != nil {
 			return nil, err
 		}
-		if refType.Valid {
-			rs.Ref.Type = refType.String
-		}
-		if author.Valid {
-			rs.Ref.Author = author.String
-		}
-		if year.Valid {
-			rs.Ref.Year = year.String
-		}
-		if url.Valid {
-			rs.Ref.URL = url.String
-		}
-		if desc.Valid {
-			rs.Ref.Description = desc.String
-		}
-		summaries = append(summaries, rs)
+		counts[refID] = count
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	summaries := make([]model.RefSummary, 0, len(file.Refs))
+	for _, ref := range file.Refs {
+		summaries = append(summaries, model.RefSummary{
+			Ref:       ref,
+			Citations: counts[ref.ID],
+		})
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].Citations == summaries[j].Citations {
+			if summaries[i].Ref.Title == summaries[j].Ref.Title {
+				return summaries[i].Ref.ID < summaries[j].Ref.ID
+			}
+			return summaries[i].Ref.Title < summaries[j].Ref.Title
+		}
+		return summaries[i].Citations > summaries[j].Citations
+	})
 	return summaries, nil
 }
 
 // GetRefCount returns the total number of references.
 func (s *Store) GetRefCount() (int, error) {
-	var count int
-	err := s.db.QueryRow(`SELECT count(*) FROM refs`).Scan(&count)
-	return count, err
+	file, err := s.loadBibliography()
+	if err != nil {
+		return 0, err
+	}
+	return len(file.Refs), nil
 }
 
 // GetCitingNotes returns notes that cite a given reference.
