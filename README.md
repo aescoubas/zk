@@ -19,7 +19,7 @@ go test -tags fts5 ./...
 
 ## Install
 
-Install the binary and shell completions into `~/.local` by default:
+Install the binary, shell completions, and bundled user skills into `~/.local` by default:
 
 ```bash
 ./install.sh --data-dir /path/to/zettelkasten-data
@@ -39,6 +39,12 @@ For a system-wide install, pass both the install prefix and the data root explic
 ```bash
 ./install.sh --prefix /usr/local --data-dir /path/to/zettelkasten-data
 ```
+
+The installer also deploys the bundled `zk-project-journaler` skill into these user-local agent directories:
+
+- `~/.codex/skills/zk-project-journaler`
+- `~/.claude/skills/zk-project-journaler`
+- `~/.gemini/skills/zk-project-journaler`
 
 ## Common Usage
 
@@ -64,6 +70,24 @@ zk index
 ```
 
 The command will rebuild the disposable `.zk/index.db` automatically when needed.
+
+## Bundled Skill
+
+`zk` ships with `zk-project-journaler`, a cross-agent skill that condenses daily Codex, Claude Code, and Gemini coding activity into a single zettel in the companion data repository.
+
+Preview a note for a given day:
+
+```bash
+python3 ~/.codex/skills/zk-project-journaler/scripts/render_daily_zettel.py --date 2026-03-11 --zk-root /path/to/zettelkasten-data
+```
+
+Create or refresh the daily zettel:
+
+```bash
+python3 ~/.codex/skills/zk-project-journaler/scripts/render_daily_zettel.py --date 2026-03-11 --zk-root /path/to/zettelkasten-data --write-note
+```
+
+The generated note lands in `zettels/YYYYMMDD-agent-activity.md`, keeps structured metadata in frontmatter, and preserves the manual synthesis sections on regeneration.
 
 ## Editor Integration
 

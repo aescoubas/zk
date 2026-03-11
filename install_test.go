@@ -28,6 +28,9 @@ func TestInstallScriptSkipsOptionalRuntimeManagement(t *testing.T) {
 		xdgConfig,
 		dataDir,
 		stubDir,
+		filepath.Join(home, ".codex"),
+		filepath.Join(home, ".claude"),
+		filepath.Join(home, ".gemini"),
 		filepath.Join(prefix, "share", "bash-completion", "completions"),
 		filepath.Join(prefix, "share", "zsh", "site-functions"),
 		filepath.Join(prefix, "share", "fish", "vendor_completions.d"),
@@ -133,6 +136,12 @@ exit 0
 		filepath.Join(prefix, "share", "bash-completion", "completions", "zk"),
 		filepath.Join(prefix, "share", "zsh", "site-functions", "_zk"),
 		filepath.Join(prefix, "share", "fish", "vendor_completions.d", "zk.fish"),
+		filepath.Join(home, ".codex", "skills", "zk-project-journaler", "SKILL.md"),
+		filepath.Join(home, ".codex", "skills", "zk-project-journaler", "scripts", "render_daily_zettel.py"),
+		filepath.Join(home, ".claude", "skills", "zk-project-journaler", "SKILL.md"),
+		filepath.Join(home, ".claude", "skills", "zk-project-journaler", "scripts", "render_daily_zettel.py"),
+		filepath.Join(home, ".gemini", "skills", "zk-project-journaler", "SKILL.md"),
+		filepath.Join(home, ".gemini", "skills", "zk-project-journaler", "scripts", "render_daily_zettel.py"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected installed file %s: %v", path, err)

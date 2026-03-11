@@ -16,6 +16,9 @@ EOF
 
 PREFIX="$HOME/.local"
 DATA_DIR="${ZK_DATA_DIR:-}"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+GEMINI_HOME="${GEMINI_HOME:-$HOME/.gemini}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -62,6 +65,7 @@ REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 CONFIG_DIR="$CONFIG_HOME/zk"
 CONFIG_FILE="$CONFIG_DIR/root"
+SKILL_SOURCE_DIR="$REPO_ROOT/skills/zk-project-journaler"
 
 # Ensure bin directory exists
 if [ ! -d "$BIN_DIR" ]; then
@@ -137,6 +141,27 @@ install_completion() {
     fi
 }
 
+install_skill() {
+    local agent_name=$1
+    local agent_home=$2
+    local source_dir=$3
+    local dest_dir="$agent_home/skills/zk-project-journaler"
+    local temp_dir="$agent_home/skills/.zk-project-journaler.tmp.$$"
+
+    mkdir -p "$agent_home/skills"
+    rm -rf "$temp_dir"
+    mkdir -p "$temp_dir"
+    cp -R "$source_dir"/. "$temp_dir"/
+    find "$temp_dir" -type d -exec chmod 755 {} +
+    find "$temp_dir" -type f -exec chmod 644 {} +
+    if [ -d "$temp_dir/scripts" ]; then
+        find "$temp_dir/scripts" -type f -exec chmod 755 {} +
+    fi
+    rm -rf "$dest_dir"
+    mv "$temp_dir" "$dest_dir"
+    echo "Installed bundled skill for $agent_name in $dest_dir"
+}
+
 # User-level completion paths (if they exist)
 # Bash
 install_completion "bash" "$PREFIX/share/bash-completion/completions" "zk"
@@ -150,6 +175,17 @@ install_completion "zsh" "$HOME/.zsh/completions" "_zk"
 install_completion "fish" "$PREFIX/share/fish/vendor_completions.d" "zk.fish"
 install_completion "fish" "$HOME/.config/fish/completions" "zk.fish"
 
+# 4. Install Bundled Skills
+if [ -d "$SKILL_SOURCE_DIR" ]; then
+    echo "Installing bundled agent skills..."
+    install_skill "Codex" "$CODEX_HOME" "$SKILL_SOURCE_DIR"
+    install_skill "Claude Code" "$CLAUDE_HOME" "$SKILL_SOURCE_DIR"
+    install_skill "Gemini" "$GEMINI_HOME" "$SKILL_SOURCE_DIR"
+else
+    echo "Warning: bundled skill source not found at $SKILL_SOURCE_DIR"
+fi
+
 echo -e "${GREEN}Installation complete!${NC}"
 echo "Run 'zk help' to verify."
 echo "Semantic commands such as 'zk ask' and 'zk embed' require a separately managed Ollama setup."
+echo "Bundled skill 'zk-project-journaler' was deployed to Codex, Claude Code, and Gemini user skill directories."

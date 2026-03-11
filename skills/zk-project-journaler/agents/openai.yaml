@@ -1,0 +1,3 @@
+interface:
+  display_name: "ZK Project Journaler"
+  short_description: "Condense Codex, Claude Code, and Gemini activity into a daily zettel"

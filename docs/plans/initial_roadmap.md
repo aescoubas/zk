@@ -24,6 +24,7 @@
 *   `internal/mcp/` (Model Context Protocol)
 *   `internal/srs/` (Spaced Repetition algorithm)
 *   `internal/llm/` (Ollama embeddings client)
+*   `skills/` (Bundled cross-agent workflow skills distributed with `zk`)
 *   `tools/editors/` and `tools/vim/` (Editor integration)
 *   External data repo (typically `zettelkasten-data/`) for `zettels/`, `projects/`, `kanban/`, and `archive/`
 
