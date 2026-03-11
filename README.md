@@ -87,7 +87,16 @@ Create or refresh the daily zettel:
 python3 ~/.codex/skills/zk-project-journaler/scripts/render_daily_zettel.py --date 2026-03-11 --zk-root /path/to/zettelkasten-data --write-note
 ```
 
-The generated note lands in `zettels/YYYYMMDD-agent-activity.md`, keeps structured metadata in frontmatter, and preserves the manual synthesis sections on regeneration.
+The generated note lands in `zettels/YYYYMMDD-agent-activity.md`, keeps structured metadata in frontmatter, and preserves the synthesis sections on regeneration.
+
+When you invoke `zk-project-journaler` through Codex, Claude Code, or Gemini, the agent is expected to go one step further than the raw script output:
+
+- refresh the digest
+- fill `Manual synthesis`
+- fill `Candidate zettels`
+- fill `Open loops`
+
+If you run the script directly from the shell, it only produces the factual digest and note template.
 
 ## Editor Integration
 

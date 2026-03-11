@@ -8,6 +8,33 @@ import (
 	"testing"
 )
 
+func TestProjectJournalerSkillRequiresPopulatedSynthesisSections(t *testing.T) {
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	skillPath := filepath.Join(repoRoot, "skills", "zk-project-journaler", "SKILL.md")
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	skill := string(data)
+	for _, want := range []string{
+		"the task is not complete until",
+		"replace the placeholder synthesis sections yourself",
+		"Manual synthesis",
+		"Candidate zettels",
+		"Open loops",
+		"Do not leave placeholder text",
+	} {
+		if !strings.Contains(skill, want) {
+			t.Fatalf("expected skill to contain %q\n%s", want, skill)
+		}
+	}
+}
+
 func TestProjectJournalerRendersAndUpsertsDailyZettel(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available")
