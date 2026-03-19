@@ -42,6 +42,7 @@ type Embedding struct {
 	NoteID string    `json:"note_id"`
 	Vector []float64 `json:"vector"`
 	Model  string    `json:"model"`
+	Hash   string    `json:"hash"`
 }
 
 // Link represents a connection between two notes.

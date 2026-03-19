@@ -53,28 +53,33 @@ func runEmbed() {
 		os.Exit(1)
 	}
 
+	// Load all existing embedding metadata in one query for fast cache checks.
+	existingMeta, err := st.GetAllEmbeddingMeta()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading embedding metadata: %v\n", err)
+		os.Exit(1)
+	}
+
 	client := llm.NewClient(ollamaURL, embedModel)
 	fmt.Printf("Using Ollama at %s with model %s\n", ollamaURL, embedModel)
 
-	count := 0
-	for i, n := range notes {
-		// Check if exists
+	// Build list of notes that need embedding.
+	var toEmbed []*model.Note
+	skipped := 0
+	for _, n := range notes {
 		if !forceReembed {
-			existing, _ := st.GetEmbedding(n.ID)
-			if existing != nil && existing.Model == embedModel {
+			if existing, ok := existingMeta[n.ID]; ok && existing.Model == embedModel && existing.Hash == n.Hash {
+				skipped++
 				continue
 			}
 		}
+		toEmbed = append(toEmbed, n)
+	}
 
-		// Need full content. ListNotes only gives minimal info?
-		// Check internal/store/store.go ListNotes -> SELECT id, path, title, hash, mod_time
-		// Content is NOT in ListNotes.
-		// Need to read file or use GetNote (which doesn't return content either based on current store.go?)
-		// store.go GetNote -> id, path, title, hash, mod_time
-		// RawContent field exists in model.Note but is not populated by Store methods unless FTS?
-		// Wait, parser populates it.
-		// I need to read the file.
-		
+	fmt.Printf("Notes: %d total, %d cached, %d to embed\n", len(notes), skipped, len(toEmbed))
+
+	count := 0
+	for i, n := range toEmbed {
 		fullPath := filepath.Join(absRoot, n.Path)
 		content, err := os.ReadFile(fullPath)
 		if err != nil {
@@ -82,14 +87,13 @@ func runEmbed() {
 			continue
 		}
 
-		fmt.Printf("[%d/%d] Embedding %s...\n", i+1, len(notes), n.ID)
-		
+		fmt.Printf("[%d/%d] Embedding %s...\n", i+1, len(toEmbed), n.ID)
+
 		text := string(content)
 		// Truncate to avoid context limit (aggressive limit 2000 chars)
 		if len(text) > 2000 {
 			text = text[:2000]
 		}
-		// fmt.Printf("Embedding %d chars...\n", len(text))
 
 		vec, err := client.Embed(text)
 		if err != nil {
@@ -101,13 +105,14 @@ func runEmbed() {
 			NoteID: n.ID,
 			Vector: vec,
 			Model:  embedModel,
+			Hash:   n.Hash,
 		}
-		
+
 		if err := st.SaveEmbedding(emb); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to save embedding for %s: %v\n", n.ID, err)
 		}
 		count++
 	}
 
-	fmt.Printf("Finished. Generated %d embeddings.\n", count)
+	fmt.Printf("Finished. Generated %d new embeddings.\n", count)
 }

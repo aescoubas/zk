@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS tags (
 CREATE TABLE IF NOT EXISTS embeddings (
 	note_id TEXT PRIMARY KEY,
 	vector BLOB,
-	model TEXT
+	model TEXT,
+	hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS citations (

@@ -143,6 +143,9 @@ func (s *Store) initIndexSchema(features indexFeatures) error {
 		}
 	}
 
+	// Migrate: add hash column to embeddings if missing (added for incremental embed).
+	s.db.Exec(`ALTER TABLE embeddings ADD COLUMN hash TEXT`)
+
 	s.hasFTS = features.FTS5
 	return nil
 }
@@ -864,21 +867,22 @@ func (s *Store) SaveEmbedding(e *model.Embedding) error {
 		return err
 	}
 	_, err = s.db.Exec(`
-		INSERT INTO embeddings (note_id, vector, model)
-		VALUES (?, ?, ?)
+		INSERT INTO embeddings (note_id, vector, model, hash)
+		VALUES (?, ?, ?, ?)
 		ON CONFLICT(note_id) DO UPDATE SET
 			vector=excluded.vector,
-			model=excluded.model
-	`, e.NoteID, vecBytes, e.Model)
+			model=excluded.model,
+			hash=excluded.hash
+	`, e.NoteID, vecBytes, e.Model, e.Hash)
 	return err
 }
 
 // GetEmbedding retrieves the embedding for a note.
 func (s *Store) GetEmbedding(noteID string) (*model.Embedding, error) {
-	row := s.db.QueryRow(`SELECT note_id, vector, model FROM embeddings WHERE note_id = ?`, noteID)
+	row := s.db.QueryRow(`SELECT note_id, vector, model, COALESCE(hash, '') FROM embeddings WHERE note_id = ?`, noteID)
 	var e model.Embedding
 	var vecBytes []byte
-	err := row.Scan(&e.NoteID, &vecBytes, &e.Model)
+	err := row.Scan(&e.NoteID, &vecBytes, &e.Model, &e.Hash)
 	if err == sql.ErrNoRows {
 		return nil, nil // Not found is okay
 	}
@@ -891,9 +895,29 @@ func (s *Store) GetEmbedding(noteID string) (*model.Embedding, error) {
 	return &e, nil
 }
 
+// GetAllEmbeddingMeta retrieves note_id, model, and hash for all embeddings
+// without loading the full vectors. Used for efficient cache checks.
+func (s *Store) GetAllEmbeddingMeta() (map[string]*model.Embedding, error) {
+	rows, err := s.db.Query(`SELECT note_id, model, COALESCE(hash, '') FROM embeddings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]*model.Embedding)
+	for rows.Next() {
+		var e model.Embedding
+		if err := rows.Scan(&e.NoteID, &e.Model, &e.Hash); err != nil {
+			return nil, err
+		}
+		result[e.NoteID] = &e
+	}
+	return result, nil
+}
+
 // GetAllEmbeddings retrieves all embeddings.
 func (s *Store) GetAllEmbeddings() ([]*model.Embedding, error) {
-	rows, err := s.db.Query(`SELECT note_id, vector, model FROM embeddings`)
+	rows, err := s.db.Query(`SELECT note_id, vector, model, COALESCE(hash, '') FROM embeddings`)
 	if err != nil {
 		return nil, err
 	}
@@ -903,7 +927,7 @@ func (s *Store) GetAllEmbeddings() ([]*model.Embedding, error) {
 	for rows.Next() {
 		var e model.Embedding
 		var vecBytes []byte
-		if err := rows.Scan(&e.NoteID, &vecBytes, &e.Model); err != nil {
+		if err := rows.Scan(&e.NoteID, &vecBytes, &e.Model, &e.Hash); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(vecBytes, &e.Vector); err != nil {
