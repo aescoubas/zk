@@ -71,6 +71,39 @@ zk index
 
 The command will rebuild the disposable `.zk/index.db` automatically when needed.
 
+## Semantic Embedding
+
+`zk embed` generates vector embeddings for every note using a local Ollama instance. These embeddings power `zk ask` (semantic Q&A) and `zk similar` (find related notes).
+
+```bash
+zk embed                    # embed new/changed notes (incremental)
+zk embed --force            # re-embed all notes
+zk embed --batch 100        # send 100 notes per batch request (default 50)
+zk embed --model nomic-embed-text --url http://localhost:11434
+```
+
+Embedding uses the Ollama `/api/embed` batch endpoint, sending multiple notes per HTTP request. It also requests `num_thread = NumCPU - 2` so Ollama uses most available CPU cores for inference. Unchanged notes are skipped automatically via content-hash caching.
+
+### Ollama Setup for Embedding
+
+Install Ollama and pull the embedding model:
+
+```bash
+ollama pull nomic-embed-text
+```
+
+For better throughput on multi-core machines, set `OLLAMA_NUM_PARALLEL` in the Ollama service configuration (e.g. `/etc/systemd/system/ollama.service`):
+
+```ini
+Environment="OLLAMA_NUM_PARALLEL=4"
+```
+
+Then reload and restart:
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart ollama
+```
+
 ## Bundled Skill
 
 `zk` ships with `zk-project-journaler`, a cross-agent skill that condenses daily Codex, Claude Code, and Gemini coding activity into a single zettel in the companion data repository.
